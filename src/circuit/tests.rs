@@ -1,5 +1,6 @@
 use crate::circuit::ops::poly::PolyOp;
 use crate::circuit::*;
+use crate::tensor::{DataFormat, KernelFormat};
 use crate::tensor::{Tensor, TensorType, ValTensor, VarTensor};
 use halo2_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
@@ -1040,6 +1041,10 @@ mod conv {
             let a = VarTensor::new_advice(cs, K, 1, (LEN + 1) * LEN);
             let b = VarTensor::new_advice(cs, K, 1, (LEN + 1) * LEN);
             let output = VarTensor::new_advice(cs, K, 1, (LEN + 1) * LEN);
+
+            // column for constants
+            let _constant = VarTensor::constant_cols(cs, K, 8, false);
+
             Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
@@ -1061,6 +1066,8 @@ mod conv {
                                     padding: vec![(1, 1); 2],
                                     stride: vec![2; 2],
                                     group: 1,
+                                    data_format: DataFormat::default(),
+                                    kernel_format: KernelFormat::default(),
                                 }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1171,7 +1178,7 @@ mod conv_col_ultra_overflow {
 
     use super::*;
 
-    const K: usize = 4;
+    const K: usize = 6;
     const LEN: usize = 10;
 
     #[derive(Clone)]
@@ -1191,9 +1198,10 @@ mod conv_col_ultra_overflow {
         }
 
         fn configure(cs: &mut ConstraintSystem<F>) -> Self::Config {
-            let a = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN);
-            let b = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN);
-            let output = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN);
+            let a = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN * LEN);
+            let b = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN * LEN);
+            let output = VarTensor::new_advice(cs, K, 1, LEN * LEN * LEN * LEN);
+            let _constant = VarTensor::constant_cols(cs, K, LEN * LEN * LEN * LEN, false);
             Self::Config::configure(cs, &[a, b], &output, CheckMode::SAFE)
         }
 
@@ -1215,6 +1223,8 @@ mod conv_col_ultra_overflow {
                                     padding: vec![(1, 1); 2],
                                     stride: vec![2; 2],
                                     group: 1,
+                                    data_format: DataFormat::default(),
+                                    kernel_format: KernelFormat::default(),
                                 }),
                             )
                             .map_err(|_| Error::Synthesis)
@@ -1372,6 +1382,8 @@ mod conv_relu_col_ultra_overflow {
                                     padding: vec![(1, 1); 2],
                                     stride: vec![2; 2],
                                     group: 1,
+                                    data_format: DataFormat::default(),
+                                    kernel_format: KernelFormat::default(),
                                 }),
                             )
                             .map_err(|_| Error::Synthesis);
@@ -1776,13 +1788,18 @@ mod shuffle {
 
             let d = VarTensor::new_advice(cs, K, 1, LEN);
             let e = VarTensor::new_advice(cs, K, 1, LEN);
+            let f: VarTensor = VarTensor::new_advice(cs, K, 1, LEN);
 
             let _constant = VarTensor::constant_cols(cs, K, LEN * NUM_LOOP, false);
 
             let mut config =
                 Self::Config::configure(cs, &[a.clone(), b.clone()], &c, CheckMode::SAFE);
             config
-                .configure_shuffles(cs, &[a.clone(), b.clone()], &[d.clone(), e.clone()])
+                .configure_shuffles(
+                    cs,
+                    &[a.clone(), b.clone(), c.clone()],
+                    &[d.clone(), e.clone(), f.clone()],
+                )
                 .unwrap();
             config
         }
@@ -1803,6 +1820,7 @@ mod shuffle {
                                 &mut region,
                                 &self.inputs[i],
                                 &self.references[i],
+                                layouts::SortCollisionMode::Unsorted,
                             )
                             .map_err(|_| Error::Synthesis)?;
                         }
@@ -1988,7 +2006,7 @@ mod add_with_overflow_and_poseidon {
             let base = BaseConfig::configure(cs, &[a, b], &output, CheckMode::SAFE);
             VarTensor::constant_cols(cs, K, 2, false);
 
-            let poseidon = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::configure(cs, ());
+            let poseidon = PoseidonChip::<PoseidonSpec, WIDTH, RATE>::configure(cs, ());
 
             MyCircuitConfig { base, poseidon }
         }
@@ -1998,7 +2016,7 @@ mod add_with_overflow_and_poseidon {
             mut config: Self::Config,
             mut layouter: impl Layouter<Fr>,
         ) -> Result<(), Error> {
-            let poseidon_chip: PoseidonChip<PoseidonSpec, WIDTH, RATE, WIDTH> =
+            let poseidon_chip: PoseidonChip<PoseidonSpec, WIDTH, RATE> =
                 PoseidonChip::new(config.poseidon.clone());
 
             let assigned_inputs_a =
@@ -2033,11 +2051,9 @@ mod add_with_overflow_and_poseidon {
         let b = (0..LEN)
             .map(|i| halo2curves::bn256::Fr::from(i as u64 + 1))
             .collect::<Vec<_>>();
-        let commitment_a =
-            PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(a.clone()).unwrap()[0][0];
+        let commitment_a = PoseidonChip::<PoseidonSpec, WIDTH, RATE>::run(a.clone()).unwrap()[0][0];
 
-        let commitment_b =
-            PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(b.clone()).unwrap()[0][0];
+        let commitment_b = PoseidonChip::<PoseidonSpec, WIDTH, RATE>::run(b.clone()).unwrap()[0][0];
 
         // parameters
         let a = Tensor::from(a.into_iter().map(Value::known));
@@ -2059,13 +2075,11 @@ mod add_with_overflow_and_poseidon {
         let b = (0..LEN)
             .map(|i| halo2curves::bn256::Fr::from(i as u64 + 1))
             .collect::<Vec<_>>();
-        let commitment_a = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(a.clone())
-            .unwrap()[0][0]
-            + Fr::one();
+        let commitment_a =
+            PoseidonChip::<PoseidonSpec, WIDTH, RATE>::run(a.clone()).unwrap()[0][0] + Fr::one();
 
-        let commitment_b = PoseidonChip::<PoseidonSpec, WIDTH, RATE, WIDTH>::run(b.clone())
-            .unwrap()[0][0]
-            + Fr::one();
+        let commitment_b =
+            PoseidonChip::<PoseidonSpec, WIDTH, RATE>::run(b.clone()).unwrap()[0][0] + Fr::one();
 
         // parameters
         let a = Tensor::from(a.into_iter().map(Value::known));

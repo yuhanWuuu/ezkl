@@ -1,6 +1,8 @@
 use std::any::Any;
 
 use serde::{Deserialize, Serialize};
+#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
+use tract_onnx::prelude::DatumType;
 
 use crate::{
     graph::quantize_tensor,
@@ -96,6 +98,8 @@ pub enum InputType {
     Int,
     ///
     TDim,
+    ///
+    Unknown,
 }
 
 impl InputType {
@@ -105,7 +109,10 @@ impl InputType {
     }
 
     ///
-    pub fn roundtrip<T: num::ToPrimitive + num::FromPrimitive + Clone>(&self, input: &mut T) {
+    pub fn roundtrip<T: num::ToPrimitive + num::FromPrimitive + Clone + std::fmt::Debug>(
+        &self,
+        input: &mut T,
+    ) {
         match self {
             InputType::Bool => {
                 let boolean_input = input.clone().to_i64().unwrap();
@@ -118,7 +125,7 @@ impl InputType {
                 *input = T::from_f32(f32_input).unwrap();
             }
             InputType::F32 => {
-                let f32_input = input.clone().to_f32().unwrap();
+                let f32_input: f32 = input.clone().to_f32().unwrap();
                 *input = T::from_f32(f32_input).unwrap();
             }
             InputType::F64 => {
@@ -129,6 +136,45 @@ impl InputType {
                 let int_input = input.clone().to_i64().unwrap();
                 *input = T::from_i64(int_input).unwrap();
             }
+            InputType::Unknown => {}
+        }
+    }
+}
+
+impl std::str::FromStr for InputType {
+    type Err = CircuitError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "bool" => Ok(InputType::Bool),
+            "f16" => Ok(InputType::F16),
+            "f32" => Ok(InputType::F32),
+            "f64" => Ok(InputType::F64),
+            "int" => Ok(InputType::Int),
+            "tdim" => Ok(InputType::TDim),
+            e => Err(CircuitError::InvalidInputType(e.to_string())),
+        }
+    }
+}
+
+#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
+impl From<DatumType> for InputType {
+    fn from(datum_type: DatumType) -> Self {
+        match datum_type {
+            DatumType::Bool => InputType::Bool,
+            DatumType::F16 => InputType::F16,
+            DatumType::F32 => InputType::F32,
+            DatumType::F64 => InputType::F64,
+            DatumType::I8 => InputType::Int,
+            DatumType::I16 => InputType::Int,
+            DatumType::I32 => InputType::Int,
+            DatumType::I64 => InputType::Int,
+            DatumType::U8 => InputType::Int,
+            DatumType::U16 => InputType::Int,
+            DatumType::U32 => InputType::Int,
+            DatumType::U64 => InputType::Int,
+            DatumType::TDim => InputType::TDim,
+            _ => unimplemented!(),
         }
     }
 }
@@ -140,6 +186,8 @@ pub struct Input {
     pub scale: crate::Scale,
     ///
     pub datum_type: InputType,
+    /// decomp check
+    pub decomp: bool,
 }
 
 impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Input {
@@ -177,6 +225,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Input 
                     config,
                     region,
                     values[..].try_into()?,
+                    self.decomp,
                 )?)),
             }
         } else {
@@ -232,20 +281,26 @@ pub struct Constant<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> {
     ///
     #[serde(skip)]
     pub pre_assigned_val: Option<ValTensor<F>>,
+    ///
+    pub decomp: bool,
 }
 
 impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Constant<F> {
     ///
-    pub fn new(quantized_values: Tensor<F>, raw_values: Tensor<f32>) -> Self {
+    pub fn new(quantized_values: Tensor<F>, raw_values: Tensor<f32>, decomp: bool) -> Self {
         Self {
             quantized_values,
             raw_values,
             pre_assigned_val: None,
+            decomp,
         }
     }
     /// Rebase the scale of the constant
     pub fn rebase_scale(&mut self, new_scale: crate::Scale) -> Result<(), CircuitError> {
-        let visibility = self.quantized_values.visibility().unwrap();
+        let visibility = match self.quantized_values.visibility() {
+            Some(v) => v,
+            None => return Err(CircuitError::UnsetVisibility),
+        };
         self.quantized_values = quantize_tensor(self.raw_values.clone(), new_scale, &visibility)?;
         Ok(())
     }
@@ -289,7 +344,12 @@ impl<
             self.quantized_values.clone().try_into()?
         };
         // we gotta constrain it once if its used multiple times
-        Ok(Some(layouts::identity(config, region, &[value])?))
+        Ok(Some(layouts::identity(
+            config,
+            region,
+            &[value],
+            self.decomp,
+        )?))
     }
 
     fn clone_dyn(&self) -> Box<dyn Op<F>> {

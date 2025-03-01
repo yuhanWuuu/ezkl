@@ -27,7 +27,7 @@ pub fn get_rep(
     n: usize,
 ) -> Result<Vec<IntegerRep>, DecompositionError> {
     // check if x is too large
-    if x.abs() > (base.pow(n as u32) as IntegerRep) - 1 {
+    if (*x).abs() > ((base as i128).pow(n as u32)) - 1 {
         return Err(DecompositionError::TooLarge(*x, base, n));
     }
     let mut rep = vec![0; n + 1];
@@ -43,8 +43,8 @@ pub fn get_rep(
     let mut x = x.abs();
     //
     for i in (1..rep.len()).rev() {
-        rep[i] = x % base as i128;
-        x /= base as i128;
+        rep[i] = x % base as IntegerRep;
+        x /= base as IntegerRep;
     }
 
     Ok(rep)
@@ -127,7 +127,7 @@ pub fn decompose(
         .flatten()
         .collect::<Vec<IntegerRep>>();
 
-    let output = Tensor::<i128>::new(Some(&resp), &dims)?;
+    let output = Tensor::<IntegerRep>::new(Some(&resp), &dims)?;
 
     Ok(output)
 }
@@ -385,6 +385,12 @@ pub fn resize<T: TensorType + Send + Sync>(
 pub fn add<T: TensorType + Add<Output = T> + std::marker::Send + std::marker::Sync>(
     t: &[Tensor<T>],
 ) -> Result<Tensor<T>, TensorError> {
+    if t.len() == 1 {
+        return Ok(t[0].clone());
+    } else if t.is_empty() {
+        return Err(TensorError::DimMismatch("add".to_string()));
+    }
+
     // calculate value of output
     let mut output: Tensor<T> = t[0].clone();
 
@@ -433,6 +439,11 @@ pub fn add<T: TensorType + Add<Output = T> + std::marker::Send + std::marker::Sy
 pub fn sub<T: TensorType + Sub<Output = T> + std::marker::Send + std::marker::Sync>(
     t: &[Tensor<T>],
 ) -> Result<Tensor<T>, TensorError> {
+    if t.len() == 1 {
+        return Ok(t[0].clone());
+    } else if t.is_empty() {
+        return Err(TensorError::DimMismatch("sub".to_string()));
+    }
     // calculate value of output
     let mut output: Tensor<T> = t[0].clone();
 
@@ -479,6 +490,11 @@ pub fn sub<T: TensorType + Sub<Output = T> + std::marker::Send + std::marker::Sy
 pub fn mult<T: TensorType + Mul<Output = T> + std::marker::Send + std::marker::Sync>(
     t: &[Tensor<T>],
 ) -> Result<Tensor<T>, TensorError> {
+    if t.len() == 1 {
+        return Ok(t[0].clone());
+    } else if t.is_empty() {
+        return Err(TensorError::DimMismatch("mult".to_string()));
+    }
     // calculate value of output
     let mut output: Tensor<T> = t[0].clone();
 
@@ -1050,6 +1066,7 @@ pub fn scatter_nd<T: TensorType + Send + Sync>(
             let slice = coord.iter().map(|x| *x..*x + 1).collect::<Vec<_>>();
             let index_val = index.get_slice(&slice)?;
             let index_slice = index_val.iter().map(|x| *x..*x + 1).collect::<Vec<_>>();
+
             let src_val = src.get_slice(&slice)?;
             output.set_slice(&index_slice, &src_val)?;
             Ok::<_, TensorError>(())
@@ -1309,7 +1326,6 @@ pub fn pad<T: TensorType>(
 ///
 /// # Errors
 /// Returns a TensorError if the tensors in `inputs` have incompatible dimensions for concatenation along the specified `axis`.
-
 pub fn concat<T: TensorType + Send + Sync>(
     inputs: &[&Tensor<T>],
     axis: usize,
@@ -1664,7 +1680,7 @@ pub mod nonlinearities {
     ///     Some(&[2, 15, 2, 1, 1, 0]),
     ///     &[2, 3],
     /// ).unwrap();
-    /// let result = exp(&x, 1.0);
+    /// let result = exp(&x, 1.0,  std::f64::consts::E);
     /// let expected = Tensor::<IntegerRep>::new(Some(&[7, 3269017, 7, 3, 3, 1]), &[2, 3]).unwrap();
     /// assert_eq!(result, expected);
     ///
@@ -1673,16 +1689,16 @@ pub mod nonlinearities {
     ///    Some(&[37, 12, 41]),
     ///   &[3],
     /// ).unwrap();
-    /// let result = exp(&x, 512.0);
+    /// let result = exp(&x, 512.0, std::f64::consts::E);
     ///
     /// let expected = Tensor::<IntegerRep>::new(Some(&[550, 524, 555]), &[3]).unwrap();
     ///
     /// assert_eq!(result, expected);
     /// ```
-    pub fn exp(a: &Tensor<IntegerRep>, scale_input: f64) -> Tensor<IntegerRep> {
+    pub fn exp(a: &Tensor<IntegerRep>, scale_input: f64, base: f64) -> Tensor<IntegerRep> {
         a.par_enum_map(|_, a_i| {
             let kix = (a_i as f64) / scale_input;
-            let fout = scale_input * kix.exp();
+            let fout = scale_input * base.powf(kix);
             let rounded = fout.round();
             Ok::<_, TensorError>(rounded as IntegerRep)
         })
@@ -2085,7 +2101,6 @@ pub mod nonlinearities {
     /// let expected = Tensor::<IntegerRep>::new(Some(&[4, 25, 8, 1, 1, 0]), &[2, 3]).unwrap();
     /// assert_eq!(result, expected);
     /// ```
-
     pub fn tanh(a: &Tensor<IntegerRep>, scale_input: f64) -> Tensor<IntegerRep> {
         a.par_enum_map(|_, a_i| {
             let kix = (a_i as f64) / scale_input;

@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use super::ops::DecompositionError;
+use super::{ops::DecompositionError, DataFormat};
 
 /// A wrapper for tensor related errors.
 #[derive(Debug, Error)]
@@ -38,4 +38,13 @@ pub enum TensorError {
     /// Decomposition error
     #[error("decomposition error: {0}")]
     DecompositionError(#[from] DecompositionError),
+    /// Invalid argument
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
+    /// Index out of bounds
+    #[error("index {0} out of bounds for dimension {1}")]
+    IndexOutOfBounds(usize, usize),
+    /// Invalid data conversion
+    #[error("invalid data conversion from format {0} to {1}")]
+    InvalidDataConversion(DataFormat, DataFormat),
 }

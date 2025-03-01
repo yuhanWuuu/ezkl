@@ -25,7 +25,7 @@ pub enum CircuitError {
     /// This operation is unsupported
     #[error("unsupported operation in graph")]
     UnsupportedOp,
-    ///
+    /// Invalid einsum expression
     #[error("invalid einsum expression")]
     InvalidEinsum,
     /// Flush error
@@ -97,4 +97,16 @@ pub enum CircuitError {
     /// Invalid scale
     #[error("negative scale for an op that requires positive inputs {0}")]
     NegativeScale(String),
+    #[error("invalid input type {0}")]
+    /// Invalid input type
+    InvalidInputType(String),
+    #[error("an element is missing from the shuffled version of the tensor")]
+    /// An element is missing from the shuffled version of the tensor
+    MissingShuffleElement,
+    /// Visibility has not been set
+    #[error("visibility has not been set")]
+    UnsetVisibility,
+    /// A decomposition base overflowed
+    #[error("decomposition base overflowed")]
+    DecompositionBaseOverflow,
 }

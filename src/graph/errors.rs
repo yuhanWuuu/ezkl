@@ -11,6 +11,12 @@ pub enum GraphError {
     /// Shape mismatch in circuit construction
     #[error("invalid dimensions used for node {0} ({1})")]
     InvalidDims(usize, String),
+    /// Non scalar power
+    #[error("we only support scalar powers")]
+    NonScalarPower,
+    /// Non scalar base for exponentiation
+    #[error("we only support scalar bases for exponentiation")]
+    NonScalarBase,
     /// Wrong method was called to configure an op
     #[error("wrong method was called to configure node {0} ({1})")]
     WrongMethod(usize, String),
@@ -27,7 +33,7 @@ pub enum GraphError {
     #[error("a node is missing required params: {0}")]
     MissingParams(String),
     /// A node has missing parameters
-    #[error("a node is has misformed params: {0}")]
+    #[error("a node has misformed params: {0}")]
     MisformedParams(String),
     /// Error in the configuration of the visibility of variables
     #[error("there should be at least one set of public variables")]
@@ -113,13 +119,13 @@ pub enum GraphError {
     /// Missing input for a node
     #[error("missing input for node {0}")]
     MissingInput(usize),
-    ///
+    /// Ranges can only be constant
     #[error("range only supports constant inputs in a zk circuit")]
     NonConstantRange,
-    ///
+    /// Trilu diagonal must be constant
     #[error("trilu only supports constant diagonals in a zk circuit")]
     NonConstantTrilu,
-    ///
+    /// The witness was too short
     #[error("insufficient witness values to generate a fixed output")]
     InsufficientWitnessValues,
     /// Missing scale
@@ -143,4 +149,13 @@ pub enum GraphError {
     /// Invalid RunArg
     #[error("invalid RunArgs: {0}")]
     InvalidRunArgs(String),
+    /// Only nearest neighbor interpolation is supported
+    #[error("only nearest neighbor interpolation is supported")]
+    InvalidInterpolation,
+    /// Node has a missing output
+    #[error("node {0} has a missing output")]
+    MissingOutput(usize),
+    /// Inssuficient advice columns
+    #[error("insuficcient advice columns (need {0} at least)")]
+    InsufficientAdviceColumns(usize),
 }

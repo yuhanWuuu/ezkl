@@ -46,6 +46,9 @@ use thiserror::Error as thisError;
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
 use tosubcommand::ToFlags;
 
+#[cfg(feature = "python-bindings")]
+use pyo3::types::PyDictMethods;
+
 use halo2curves::bn256::{Bn256, Fr, G1Affine};
 
 fn serde_format_from_str(s: &str) -> halo2_proofs::SerdeFormat {
@@ -116,9 +119,8 @@ impl ToPyObject for ProofType {
 #[cfg(feature = "python-bindings")]
 /// Obtains StrategyType from PyObject (Required for StrategyType to be compatible with Python)
 impl<'source> pyo3::FromPyObject<'source> for ProofType {
-    fn extract(ob: &'source pyo3::PyAny) -> pyo3::PyResult<Self> {
-        let trystr = <pyo3::types::PyString as pyo3::PyTryFrom>::try_from(ob)?;
-        let strval = trystr.to_string();
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> pyo3::PyResult<Self> {
+        let strval = String::extract_bound(ob)?;
         match strval.to_lowercase().as_str() {
             "single" => Ok(ProofType::Single),
             "for-aggr" => Ok(ProofType::ForAggr),
@@ -174,9 +176,8 @@ impl pyo3::IntoPy<PyObject> for StrategyType {
 #[cfg(feature = "python-bindings")]
 /// Obtains StrategyType from PyObject (Required for StrategyType to be compatible with Python)
 impl<'source> pyo3::FromPyObject<'source> for StrategyType {
-    fn extract(ob: &'source pyo3::PyAny) -> pyo3::PyResult<Self> {
-        let trystr = <pyo3::types::PyString as pyo3::PyTryFrom>::try_from(ob)?;
-        let strval = trystr.to_string();
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> pyo3::PyResult<Self> {
+        let strval = String::extract_bound(ob)?;
         match strval.to_lowercase().as_str() {
             "single" => Ok(StrategyType::Single),
             "accum" => Ok(StrategyType::Accum),
@@ -235,7 +236,7 @@ impl ToPyObject for TranscriptType {
 
 #[cfg(feature = "python-bindings")]
 ///
-pub fn g1affine_to_pydict(g1affine_dict: &PyDict, g1affine: &G1Affine) {
+pub fn g1affine_to_pydict(g1affine_dict: &pyo3::Bound<'_, PyDict>, g1affine: &G1Affine) {
     let g1affine_x = field_to_string(&g1affine.x);
     let g1affine_y = field_to_string(&g1affine.y);
     g1affine_dict.set_item("x", g1affine_x).unwrap();
@@ -246,7 +247,7 @@ pub fn g1affine_to_pydict(g1affine_dict: &PyDict, g1affine: &G1Affine) {
 use halo2curves::bn256::G1;
 #[cfg(feature = "python-bindings")]
 ///
-pub fn g1_to_pydict(g1_dict: &PyDict, g1: &G1) {
+pub fn g1_to_pydict(g1_dict: &pyo3::Bound<'_, PyDict>, g1: &G1) {
     let g1_x = field_to_string(&g1.x);
     let g1_y = field_to_string(&g1.y);
     let g1_z = field_to_string(&g1.z);
@@ -337,7 +338,7 @@ where
         dict.set_item("instances", field_elems).unwrap();
         let hex_proof = hex::encode(&self.proof);
         dict.set_item("proof", format!("0x{}", hex_proof)).unwrap();
-        dict.set_item("transcript_type", self.transcript_type)
+        dict.set_item("transcript_type", self.transcript_type.to_object(py))
             .unwrap();
         dict.to_object(py)
     }
@@ -352,6 +353,7 @@ where
     C::ScalarExt: Serialize + DeserializeOwned,
 {
     /// Create a new application snark from proof and instance variables ready for aggregation
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         protocol: Option<PlonkProtocol<C>>,
         instances: Vec<Vec<F>>,
@@ -527,7 +529,6 @@ pub fn create_keys<Scheme: CommitmentScheme, C: Circuit<Scheme::Scalar>>(
     disable_selector_compression: bool,
 ) -> Result<ProvingKey<Scheme::Curve>, halo2_proofs::plonk::Error>
 where
-    C: Circuit<Scheme::Scalar>,
     <Scheme as CommitmentScheme>::Scalar: FromUniformBytes<64>,
 {
     //	Real proof
@@ -793,7 +794,6 @@ pub fn load_vk<Scheme: CommitmentScheme, C: Circuit<Scheme::Scalar>>(
     params: <C as Circuit<Scheme::Scalar>>::Params,
 ) -> Result<VerifyingKey<Scheme::Curve>, PfsysError>
 where
-    C: Circuit<Scheme::Scalar>,
     Scheme::Curve: SerdeObject + CurveAffine,
     Scheme::Scalar: PrimeField + SerdeObject + FromUniformBytes<64>,
 {
@@ -816,11 +816,11 @@ pub fn load_pk<Scheme: CommitmentScheme, C: Circuit<Scheme::Scalar>>(
     params: <C as Circuit<Scheme::Scalar>>::Params,
 ) -> Result<ProvingKey<Scheme::Curve>, PfsysError>
 where
-    C: Circuit<Scheme::Scalar>,
     Scheme::Curve: SerdeObject + CurveAffine,
     Scheme::Scalar: PrimeField + SerdeObject + FromUniformBytes<64>,
 {
     debug!("loading proving key from {:?}", path);
+    let start = instant::Instant::now();
     let f = File::open(path.clone()).map_err(|e| PfsysError::LoadPk(format!("{}", e)))?;
     let mut reader = BufReader::with_capacity(*EZKL_BUF_CAPACITY, f);
     let pk = ProvingKey::<Scheme::Curve>::read::<_, C>(
@@ -829,7 +829,8 @@ where
         params,
     )
     .map_err(|e| PfsysError::LoadPk(format!("{}", e)))?;
-    info!("loaded proving key ✅");
+    let elapsed = start.elapsed();
+    info!("loaded proving key in {:?}", elapsed);
     Ok(pk)
 }
 

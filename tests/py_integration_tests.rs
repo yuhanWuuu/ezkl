@@ -46,7 +46,28 @@ mod py_tests {
             assert!(status.success());
         });
         // set VOICE_DATA_DIR environment variable
-        std::env::set_var("VOICE_DATA_DIR", format!("{}", voice_data_dir));
+        unsafe {
+            std::env::set_var("VOICE_DATA_DIR", format!("{}", voice_data_dir));
+        }
+    }
+
+    fn download_catdog_data() {
+        let cat_and_dog_data_dir = shellexpand::tilde("~/data/catdog_data");
+
+        DOWNLOAD_VOICE_DATA.call_once(|| {
+            let status = Command::new("bash")
+                .args([
+                    "examples/notebooks/cat_and_dog_data.sh",
+                    &cat_and_dog_data_dir,
+                ])
+                .status()
+                .expect("failed to execute process");
+            assert!(status.success());
+        });
+        // set VOICE_DATA_DIR environment variable
+        unsafe {
+            std::env::set_var("CATDOG_DATA_DIR", format!("{}", cat_and_dog_data_dir));
+        }
     }
 
     fn setup_py_env() {
@@ -68,16 +89,17 @@ mod py_tests {
                     "install",
                     "torch-geometric==2.5.2",
                     "torch==2.2.2",
+                    "datasets==3.2.0",
+                    "torchtext==0.17.2",
                     "torchvision==0.17.2",
                     "pandas==2.2.1",
-                    "numpy==1.26.4",
                     "seaborn==0.13.2",
                     "notebook==7.1.2",
                     "nbconvert==7.16.3",
-                    "onnx==1.16.0",
+                    "onnx==1.17.0",
                     "kaggle==1.6.8",
-                    "py-solc-x==2.0.2",
-                    "web3==6.16.0",
+                    "py-solc-x==2.0.3",
+                    "web3==7.5.0",
                     "librosa==0.10.1",
                     "keras==3.1.1",
                     "tensorflow==2.16.1",
@@ -88,12 +110,13 @@ mod py_tests {
                     "xgboost==2.0.3",
                     "hummingbird-ml==0.4.11",
                     "lightgbm==4.3.0",
+                    "numpy==1.26.4",
                 ])
                 .status()
                 .expect("failed to execute process");
             assert!(status.success());
             let status = Command::new("pip")
-                .args(["install", "numpy==1.23"])
+                .args(["install", "numpy==1.26.4"])
                 .status()
                 .expect("failed to execute process");
 
@@ -123,11 +146,11 @@ mod py_tests {
         }
     }
 
-    const TESTS: [&str; 34] = [
-        "ezkl_demo_batch.ipynb",                   // 0
-        "proof_splitting.ipynb",                   // 1
-        "variance.ipynb",                          // 2
-        "mnist_gan.ipynb",                         // 3
+    const TESTS: [&str; 35] = [
+        "mnist_gan.ipynb",                         // 0
+        "ezkl_demo_batch.ipynb",                   // 1
+        "proof_splitting.ipynb",                   // 2
+        "variance.ipynb",                          // 3
         "keras_simple_demo.ipynb",                 // 4
         "mnist_gan_proof_splitting.ipynb",         // 5
         "hashed_vis.ipynb",                        // 6
@@ -158,6 +181,7 @@ mod py_tests {
         "mnist_classifier.ipynb",                  // 31
         "world_rotation.ipynb",                    // 32
         "logistic_regression.ipynb",               // 33
+        "univ3-da.ipynb",                          // 34
     ];
 
     macro_rules! test_func {
@@ -188,6 +212,27 @@ mod py_tests {
                 anvil_child.kill().unwrap();
             }
             });
+
+            #[test]
+            fn neural_bag_of_words_notebook() {
+                crate::py_tests::init_binary();
+                let test_dir: TempDir = TempDir::new("neural_bow").unwrap();
+                let path = test_dir.path().to_str().unwrap();
+                crate::py_tests::mv_test_(path, "neural_bow.ipynb");
+                run_notebook(path, "neural_bow.ipynb");
+                test_dir.close().unwrap();
+            }
+
+            #[test]
+            fn felt_conversion_test_notebook() {
+                crate::py_tests::init_binary();
+                let test_dir: TempDir = TempDir::new("felt_conversion_test").unwrap();
+                let path = test_dir.path().to_str().unwrap();
+                crate::py_tests::mv_test_(path, "felt_conversion_test.ipynb");
+                run_notebook(path, "felt_conversion_test.ipynb");
+                test_dir.close().unwrap();
+            }
+
             #[test]
             fn voice_notebook_() {
                 crate::py_tests::init_binary();
@@ -197,6 +242,20 @@ mod py_tests {
                 let path = test_dir.path().to_str().unwrap();
                 crate::py_tests::mv_test_(path, "voice_judge.ipynb");
                 run_notebook(path, "voice_judge.ipynb");
+                test_dir.close().unwrap();
+                anvil_child.kill().unwrap();
+            }
+
+
+            #[test]
+            fn cat_and_dog_notebook_() {
+                crate::py_tests::init_binary();
+                let mut anvil_child = crate::py_tests::start_anvil(false);
+                crate::py_tests::download_catdog_data();
+                let test_dir: TempDir = TempDir::new("cat_and_dog").unwrap();
+                let path = test_dir.path().to_str().unwrap();
+                crate::py_tests::mv_test_(path, "cat_and_dog.ipynb");
+                run_notebook(path, "cat_and_dog.ipynb");
                 test_dir.close().unwrap();
                 anvil_child.kill().unwrap();
             }

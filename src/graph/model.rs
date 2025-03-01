@@ -1,7 +1,6 @@
 use super::errors::GraphError;
 use super::extract_const_quantized_values;
 use super::node::*;
-use super::scale_to_multiplier;
 use super::vars::*;
 use super::GraphSettings;
 use crate::circuit::hybrid::HybridOp;
@@ -379,13 +378,18 @@ pub struct ParsedNodes {
     pub nodes: BTreeMap<usize, NodeType>,
     inputs: Vec<usize>,
     outputs: Vec<Outlet>,
+    output_types: Vec<InputType>,
 }
 
 impl ParsedNodes {
+    /// Returns the output types of the computational graph.
+    pub fn get_output_types(&self) -> Vec<InputType> {
+        self.output_types.clone()
+    }
+
     /// Returns the number of the computational graph's inputs
     pub fn num_inputs(&self) -> usize {
-        let input_nodes = self.inputs.iter();
-        input_nodes.len()
+        self.inputs.len()
     }
 
     /// Input types
@@ -425,8 +429,7 @@ impl ParsedNodes {
 
     /// Returns the number of the computational graph's outputs
     pub fn num_outputs(&self) -> usize {
-        let output_nodes = self.outputs.iter();
-        output_nodes.len()
+        self.outputs.len()
     }
 
     /// Returns shapes of the computational graph's outputs
@@ -491,6 +494,16 @@ impl Model {
         debug!("\n {}", om.table_nodes());
 
         Ok(om)
+    }
+
+    /// Gets the input types from the parsed nodes
+    pub fn get_input_types(&self) -> Result<Vec<InputType>, GraphError> {
+        self.graph.get_input_types()
+    }
+
+    /// Gets the output types from the parsed nodes
+    pub fn get_output_types(&self) -> Vec<InputType> {
+        self.graph.get_output_types()
     }
 
     ///
@@ -576,6 +589,11 @@ impl Model {
             required_range_checks: res.range_checks.into_iter().collect(),
             model_output_scales: self.graph.get_output_scales()?,
             model_input_scales: self.graph.get_input_scales(),
+            input_types: match self.get_input_types() {
+                Ok(x) => Some(x),
+                Err(_) => None,
+            },
+            output_types: Some(self.get_output_types()),
             num_dynamic_lookups: res.num_dynamic_lookups,
             total_dynamic_col_size: res.dynamic_lookup_col_coord,
             num_shuffles: res.num_shuffles,
@@ -621,19 +639,23 @@ impl Model {
     /// * `scale` - The scale to use for quantization.
     /// * `public_params` - Whether to make the params public.
     #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
-    fn load_onnx_using_tract(
+    pub(crate) fn load_onnx_using_tract(
         reader: &mut dyn std::io::Read,
-        run_args: &RunArgs,
+        variables: &[(String, usize)],
     ) -> Result<TractResult, GraphError> {
         use tract_onnx::tract_hir::internal::GenericFactoid;
 
         let mut model = tract_onnx::onnx().model_for_read(reader)?;
 
         let variables: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::from_iter(run_args.variables.clone());
+            std::collections::HashMap::from_iter(variables.iter().map(|(k, v)| (k.clone(), *v)));
 
         for (i, id) in model.clone().inputs.iter().enumerate() {
             let input = model.node_mut(id.node);
+
+            if input.outputs.len() == 0 {
+                return Err(GraphError::MissingOutput(id.node));
+            }
             let mut fact: InferenceFact = input.outputs[0].fact.clone();
 
             for (i, x) in fact.clone().shape.dims().enumerate() {
@@ -655,8 +677,8 @@ impl Model {
         }
 
         let mut symbol_values = SymbolValues::default();
-        for (symbol, value) in run_args.variables.iter() {
-            let symbol = model.symbol_table.sym(symbol);
+        for (symbol, value) in variables.iter() {
+            let symbol = model.symbols.sym(symbol);
             symbol_values = symbol_values.with(&symbol, *value as i64);
             debug!("set {} to {}", symbol, value);
         }
@@ -683,7 +705,7 @@ impl Model {
     ) -> Result<ParsedNodes, GraphError> {
         let start_time = instant::Instant::now();
 
-        let (model, symbol_values) = Self::load_onnx_using_tract(reader, run_args)?;
+        let (model, symbol_values) = Self::load_onnx_using_tract(reader, &run_args.variables)?;
 
         let scales = VarScales::from_args(run_args);
         let nodes = Self::nodes_from_graph(
@@ -702,6 +724,11 @@ impl Model {
             nodes,
             inputs: model.inputs.iter().map(|o| o.node).collect(),
             outputs: model.outputs.iter().map(|o| (o.node, o.slot)).collect(),
+            output_types: model
+                .outputs
+                .iter()
+                .map(|o| Ok::<InputType, GraphError>(model.outlet_fact(*o)?.datum_type.into()))
+                .collect::<Result<Vec<_>, GraphError>>()?,
         };
 
         let duration = start_time.elapsed();
@@ -860,6 +887,15 @@ impl Model {
                         nodes: subgraph_nodes,
                         inputs: model.inputs.iter().map(|o| o.node).collect(),
                         outputs: model.outputs.iter().map(|o| (o.node, o.slot)).collect(),
+                        output_types: model
+                            .outputs
+                            .iter()
+                            .map(|o| {
+                                Ok::<InputType, GraphError>(
+                                    model.outlet_fact(*o)?.datum_type.into(),
+                                )
+                            })
+                            .collect::<Result<Vec<_>, GraphError>>()?,
                     };
 
                     let om = Model {
@@ -906,6 +942,7 @@ impl Model {
                             n.opkind = SupportedOp::Input(Input {
                                 scale,
                                 datum_type: inp.datum_type,
+                                decomp: !run_args.ignore_range_check_inputs_outputs,
                             });
                             input_idx += 1;
                             n.out_scale = scale;
@@ -964,7 +1001,7 @@ impl Model {
             GraphError::ReadWriteFileError(model_path.display().to_string(), e.to_string())
         })?;
 
-        let (model, _) = Model::load_onnx_using_tract(&mut file, run_args)?;
+        let (model, _) = Model::load_onnx_using_tract(&mut file, &run_args.variables)?;
 
         let datum_types: Vec<DatumType> = model
             .input_outlets()?
@@ -1016,6 +1053,10 @@ impl Model {
         let required_lookups = settings.required_lookups.clone();
         let required_range_checks = settings.required_range_checks.clone();
 
+        if vars.advices.len() < 3 {
+            return Err(GraphError::InsufficientAdviceColumns(3));
+        }
+
         let mut base_gate = PolyConfig::configure(
             meta,
             vars.advices[0..2].try_into()?,
@@ -1035,6 +1076,10 @@ impl Model {
         }
 
         if settings.requires_dynamic_lookup() {
+            if vars.advices.len() < 6 {
+                return Err(GraphError::InsufficientAdviceColumns(6));
+            }
+
             base_gate.configure_dynamic_lookup(
                 meta,
                 vars.advices[0..3].try_into()?,
@@ -1043,10 +1088,13 @@ impl Model {
         }
 
         if settings.requires_shuffle() {
+            if vars.advices.len() < 6 {
+                return Err(GraphError::InsufficientAdviceColumns(6));
+            }
             base_gate.configure_shuffles(
                 meta,
-                vars.advices[0..2].try_into()?,
-                vars.advices[3..5].try_into()?,
+                vars.advices[0..3].try_into()?,
+                vars.advices[3..6].try_into()?,
             )?;
         }
 
@@ -1061,6 +1109,7 @@ impl Model {
     /// * `vars` - The variables for the circuit.
     /// * `witnessed_outputs` - The values to compare against.
     /// * `constants` - The constants for the circuit.
+    #[allow(clippy::too_many_arguments)]
     pub fn layout(
         &self,
         mut config: ModelConfig,
@@ -1123,17 +1172,10 @@ impl Model {
                     })?;
 
                 if run_args.output_visibility.is_public() || run_args.output_visibility.is_fixed() {
-                    let output_scales = self.graph.get_output_scales().map_err(|e| {
-                        error!("{}", e);
-                        halo2_proofs::plonk::Error::Synthesis
-                    })?;
                     let res = outputs
                         .iter()
                         .enumerate()
                         .map(|(i, output)| {
-                            let mut tolerance = run_args.tolerance;
-                            tolerance.scale = scale_to_multiplier(output_scales[i]).into();
-
                             let comparators = if run_args.output_visibility == Visibility::Public {
                                 let res = vars
                                     .instance
@@ -1155,7 +1197,9 @@ impl Model {
                                 .layout(
                                     &mut thread_safe_region,
                                     &[output.clone(), comparators],
-                                    Box::new(HybridOp::RangeCheck(tolerance)),
+                                    Box::new(HybridOp::Output {
+                                        decomp: !run_args.ignore_range_check_inputs_outputs,
+                                    }),
                                 )
                                 .map_err(|e| e.into())
                         })
@@ -1199,9 +1243,9 @@ impl Model {
             // Then number of columns in the circuits
             #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
             region.debug_report();
-            debug!("input indices: {:?}", node.inputs());
-            debug!("output scales: {:?}", node.out_scales());
-            debug!(
+            trace!("input indices: {:?}", node.inputs());
+            trace!("output scales: {:?}", node.out_scales());
+            trace!(
                 "input scales: {:?}",
                 node.inputs()
                     .iter()
@@ -1220,12 +1264,13 @@ impl Model {
                 // we re-assign inputs, always from the 0 outlet
                 vec![results.get(idx).ok_or(GraphError::MissingResults)?[0].clone()]
             };
-            debug!("output dims: {:?}", node.out_dims());
-            debug!(
+            trace!("output dims: {:?}", node.out_dims());
+            trace!(
                 "input dims {:?}",
                 values.iter().map(|v| v.dims()).collect_vec()
             );
 
+            let start = instant::Instant::now();
             match &node {
                 NodeType::Node(n) => {
                     let res = if node.is_constant() && node.num_uses() == 1 {
@@ -1363,6 +1408,7 @@ impl Model {
                     results.insert(*idx, full_results);
                 }
             }
+            debug!("------------ layout of {} took {:?}", idx, start.elapsed());
         }
 
         // we do this so we can support multiple passes of the same model and have deterministic results (Non-assigned inputs etc... etc...)
@@ -1413,11 +1459,9 @@ impl Model {
         let outputs = self.layout_nodes(&mut model_config, &mut region, &mut results)?;
 
         if self.visibility.output.is_public() || self.visibility.output.is_fixed() {
-            let output_scales = self.graph.get_output_scales()?;
             let res = outputs
                 .iter()
-                .enumerate()
-                .map(|(i, output)| {
+                .map(|output| {
                     let mut comparator: ValTensor<Fp> = (0..output.len())
                         .map(|_| {
                             if !self.visibility.output.is_fixed() {
@@ -1430,13 +1474,12 @@ impl Model {
                         .into();
                     comparator.reshape(output.dims())?;
 
-                    let mut tolerance = run_args.tolerance;
-                    tolerance.scale = scale_to_multiplier(output_scales[i]).into();
-
                     dummy_config.layout(
                         &mut region,
                         &[output.clone(), comparator],
-                        Box::new(HybridOp::RangeCheck(tolerance)),
+                        Box::new(HybridOp::Output {
+                            decomp: !run_args.ignore_range_check_inputs_outputs,
+                        }),
                     )
                 })
                 .collect::<Result<Vec<_>, _>>();
@@ -1458,7 +1501,7 @@ impl Model {
             .iter()
             .map(|x| {
                 x.get_felt_evals()
-                    .unwrap_or(Tensor::new(Some(&[Fp::ZERO]), &[1]).unwrap())
+                    .unwrap_or_else(|_| Tensor::new(Some(&[Fp::ZERO]), &[1]).unwrap())
             })
             .collect();
 
@@ -1528,6 +1571,7 @@ impl Model {
                         let mut op = crate::circuit::Constant::new(
                             c.quantized_values.clone(),
                             c.raw_values.clone(),
+                            c.decomp,
                         );
                         op.pre_assign(consts[const_idx].clone());
                         n.opkind = SupportedOp::Constant(op);
@@ -1554,5 +1598,17 @@ impl Model {
             instance_shapes.extend(self.graph.output_shapes()?);
         }
         Ok(instance_shapes)
+    }
+
+    /// Input types of the computational graph's public inputs (if any)
+    pub fn instance_types(&self) -> Result<Vec<InputType>, GraphError> {
+        let mut instance_types = vec![];
+        if self.visibility.input.is_public() {
+            instance_types.extend(self.graph.get_input_types()?);
+        }
+        if self.visibility.output.is_public() {
+            instance_types.extend(self.graph.get_output_types());
+        }
+        Ok(instance_types)
     }
 }

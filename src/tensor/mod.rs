@@ -9,6 +9,7 @@ pub mod var;
 
 pub use errors::TensorError;
 
+use core::hash::Hash;
 use halo2curves::ff::PrimeField;
 use maybe_rayon::{
     prelude::{
@@ -24,9 +25,6 @@ use std::path::PathBuf;
 pub use val::*;
 pub use var::*;
 
-#[cfg(feature = "metal")]
-use instant::Instant;
-
 use crate::{
     circuit::utils,
     fieldutils::{integer_rep_to_felt, IntegerRep},
@@ -40,39 +38,12 @@ use halo2_proofs::{
     poly::Rotation,
 };
 use itertools::Itertools;
-#[cfg(feature = "metal")]
-use metal::{Device, MTLResourceOptions, MTLSize};
 use std::error::Error;
 use std::fmt::Debug;
 use std::io::Read;
 use std::iter::Iterator;
 use std::ops::{Add, Deref, DerefMut, Div, Mul, Neg, Range, Sub};
 use std::{cmp::max, ops::Rem};
-
-#[cfg(feature = "metal")]
-use std::collections::HashMap;
-
-#[cfg(feature = "metal")]
-const LIB_DATA: &[u8] = include_bytes!("metal/tensor_ops.metallib");
-
-#[cfg(feature = "metal")]
-lazy_static::lazy_static! {
-    static ref DEVICE: Device = Device::system_default().expect("no device found");
-
-    static ref LIB: metal::Library = DEVICE.new_library_with_data(LIB_DATA).unwrap();
-
-    static ref QUEUE: metal::CommandQueue = DEVICE.new_command_queue();
-
-    static ref PIPELINES: HashMap<String, metal::ComputePipelineState> = {
-        let mut map = HashMap::new();
-        for name in ["add", "sub", "mul"] {
-            let function = LIB.get_function(name, None).unwrap();
-            let pipeline = DEVICE.new_compute_pipeline_state_with_function(&function).unwrap();
-            map.insert(name.to_string(), pipeline);
-        }
-        map
-    };
-}
 
 /// The (inner) type of tensor elements.
 pub trait TensorType: Clone + Debug + 'static {
@@ -91,7 +62,7 @@ pub trait TensorType: Clone + Debug + 'static {
 }
 
 macro_rules! tensor_type {
-    ($rust_type:ty, $tensor_type:ident, $zero:expr, $one:expr) => {
+    ($rust_type:ty, $tensor_type:ident, $zero:expr_2021, $one:expr_2021) => {
         impl TensorType for $rust_type {
             fn zero() -> Option<Self> {
                 Some($zero)
@@ -638,41 +609,43 @@ impl<T: Clone + TensorType> Tensor<T> {
     where
         T: Send + Sync,
     {
-        if indices.is_empty() {
+        // Fast path: empty indices or full tensor slice
+        if indices.is_empty()
+            || indices.iter().map(|x| x.end - x.start).collect::<Vec<_>>() == self.dims
+        {
             return Ok(self.clone());
         }
+
+        // Validate dimensions
         if self.dims.len() < indices.len() {
             return Err(TensorError::DimError(format!(
                 "The dimensionality of the slice {:?} is greater than the tensor's {:?}",
                 indices, self.dims
             )));
-        } else if indices.iter().map(|x| x.end - x.start).collect::<Vec<_>>() == self.dims {
-            // else if slice is the same as dims, return self
-            return Ok(self.clone());
         }
 
-        // if indices weren't specified we fill them in as required
-        let mut full_indices = indices.to_vec();
+        // Pre-allocate the full indices vector with capacity
+        let mut full_indices = Vec::with_capacity(self.dims.len());
+        full_indices.extend_from_slice(indices);
 
-        for i in 0..(self.dims.len() - indices.len()) {
-            full_indices.push(0..self.dims()[indices.len() + i])
-        }
+        // Fill remaining dimensions
+        full_indices.extend((indices.len()..self.dims.len()).map(|i| 0..self.dims[i]));
 
-        let cartesian_coord: Vec<Vec<usize>> = full_indices
+        // Pre-calculate total size and allocate result vector
+        let total_size: usize = full_indices
             .iter()
-            .cloned()
-            .multi_cartesian_product()
-            .collect();
+            .map(|range| range.end - range.start)
+            .product();
+        let mut res = Vec::with_capacity(total_size);
 
-        let res: Vec<T> = cartesian_coord
-            .par_iter()
-            .map(|e| {
-                let index = self.get_index(e);
-                self[index].clone()
-            })
-            .collect();
-
+        // Calculate new dimensions once
         let dims: Vec<usize> = full_indices.iter().map(|e| e.end - e.start).collect();
+
+        // Use iterator directly without collecting into intermediate Vec
+        for coord in full_indices.iter().cloned().multi_cartesian_product() {
+            let index = self.get_index(&coord);
+            res.push(self[index].clone());
+        }
 
         Tensor::new(Some(&res), &dims)
     }
@@ -831,7 +804,13 @@ impl<T: Clone + TensorType> Tensor<T> {
         num_repeats: usize,
         initial_offset: usize,
     ) -> Result<Tensor<T>, TensorError> {
-        let mut inner: Vec<T> = vec![];
+        if n == 0 {
+            return Err(TensorError::InvalidArgument(
+                "Cannot duplicate every 0th element".to_string(),
+            ));
+        }
+
+        let mut inner: Vec<T> = Vec::with_capacity(self.inner.len());
         let mut offset = initial_offset;
         for (i, elem) in self.inner.clone().into_iter().enumerate() {
             if (i + offset + 1) % n == 0 {
@@ -860,20 +839,28 @@ impl<T: Clone + TensorType> Tensor<T> {
         num_repeats: usize,
         initial_offset: usize,
     ) -> Result<Tensor<T>, TensorError> {
-        let mut inner: Vec<T> = vec![];
-        let mut indices_to_remove = std::collections::HashSet::new();
-        for i in 0..self.inner.len() {
-            if (i + initial_offset + 1) % n == 0 {
-                for j in 1..(1 + num_repeats) {
-                    indices_to_remove.insert(i + j);
-                }
-            }
+        if n == 0 {
+            return Err(TensorError::InvalidArgument(
+                "Cannot remove every 0th element".to_string(),
+            ));
         }
 
-        let old_inner = self.inner.clone();
-        for (i, elem) in old_inner.into_iter().enumerate() {
-            if !indices_to_remove.contains(&i) {
-                inner.push(elem.clone());
+        // Pre-calculate capacity to avoid reallocations
+        let estimated_size = self.inner.len() - (self.inner.len() / n) * num_repeats;
+        let mut inner = Vec::with_capacity(estimated_size);
+
+        // Use iterator directly instead of creating intermediate collectionsif
+        let mut i = 0;
+        while i < self.inner.len() {
+            // Add the current element
+            inner.push(self.inner[i].clone());
+
+            // If this is an nth position (accounting for offset)
+            if (i + initial_offset + 1) % n == 0 {
+                // Skip the next num_repeats elements
+                i += num_repeats + 1;
+            } else {
+                i += 1;
             }
         }
 
@@ -881,7 +868,6 @@ impl<T: Clone + TensorType> Tensor<T> {
     }
 
     /// Remove indices
-    /// WARN: assumes indices are in ascending order for speed
     /// ```
     /// use ezkl::tensor::Tensor;
     /// use ezkl::fieldutils::IntegerRep;
@@ -908,7 +894,11 @@ impl<T: Clone + TensorType> Tensor<T> {
         }
         // remove indices
         for elem in indices.iter().rev() {
-            inner.remove(*elem);
+            if *elem < self.len() {
+                inner.remove(*elem);
+            } else {
+                return Err(TensorError::IndexOutOfBounds(*elem, self.len()));
+            }
         }
 
         Tensor::new(Some(&inner), &[inner.len()])
@@ -1109,6 +1099,13 @@ impl<T: Clone + TensorType> Tensor<T> {
     ///
     /// ```
     pub fn expand(&self, shape: &[usize]) -> Result<Self, TensorError> {
+        // if both have length 1 then we can just return the tensor
+        if self.dims().iter().product::<usize>() == 1 && shape.iter().product::<usize>() == 1 {
+            let mut output = self.clone();
+            output.reshape(shape)?;
+            return Ok(output);
+        }
+
         if self.dims().len() > shape.len() {
             return Err(TensorError::DimError(format!(
                 "Cannot expand {:?} to the smaller shape {:?}",
@@ -1393,10 +1390,6 @@ impl<T: TensorType + Add<Output = T> + std::marker::Send + std::marker::Sync> Ad
         let lhs = self.expand(&broadcasted_shape).unwrap();
         let rhs = rhs.expand(&broadcasted_shape).unwrap();
 
-        #[cfg(feature = "metal")]
-        let res = metal_tensor_op(&lhs, &rhs, "add");
-
-        #[cfg(not(feature = "metal"))]
         let res = {
             let mut res: Tensor<T> = lhs
                 .par_iter()
@@ -1494,10 +1487,6 @@ impl<T: TensorType + Sub<Output = T> + std::marker::Send + std::marker::Sync> Su
         let lhs = self.expand(&broadcasted_shape).unwrap();
         let rhs = rhs.expand(&broadcasted_shape).unwrap();
 
-        #[cfg(feature = "metal")]
-        let res = metal_tensor_op(&lhs, &rhs, "sub");
-
-        #[cfg(not(feature = "metal"))]
         let res = {
             let mut res: Tensor<T> = lhs
                 .par_iter()
@@ -1565,10 +1554,6 @@ impl<T: TensorType + Mul<Output = T> + std::marker::Send + std::marker::Sync> Mu
         let lhs = self.expand(&broadcasted_shape).unwrap();
         let rhs = rhs.expand(&broadcasted_shape).unwrap();
 
-        #[cfg(feature = "metal")]
-        let res = metal_tensor_op(&lhs, &rhs, "mul");
-
-        #[cfg(not(feature = "metal"))]
         let res = {
             let mut res: Tensor<T> = lhs
                 .par_iter()
@@ -1674,7 +1659,9 @@ impl<T: TensorType + Div<Output = T> + std::marker::Send + std::marker::Sync> Di
 }
 
 // implement remainder
-impl<T: TensorType + Rem<Output = T> + std::marker::Send + std::marker::Sync> Rem for Tensor<T> {
+impl<T: TensorType + Rem<Output = T> + std::marker::Send + std::marker::Sync + PartialEq> Rem
+    for Tensor<T>
+{
     type Output = Result<Tensor<T>, TensorError>;
 
     /// Elementwise remainder of a tensor with another tensor.
@@ -1703,9 +1690,25 @@ impl<T: TensorType + Rem<Output = T> + std::marker::Send + std::marker::Sync> Re
         let mut lhs = self.expand(&broadcasted_shape).unwrap();
         let rhs = rhs.expand(&broadcasted_shape).unwrap();
 
-        lhs.par_iter_mut().zip(rhs).for_each(|(o, r)| {
-            *o = o.clone() % r;
-        });
+        lhs.par_iter_mut()
+            .zip(rhs)
+            .map(|(o, r)| {
+                match T::zero() { Some(zero) => {
+                    if r != zero {
+                        *o = o.clone() % r;
+                        Ok(())
+                    } else {
+                        Err(TensorError::InvalidArgument(
+                            "Cannot divide by zero in remainder".to_string(),
+                        ))
+                    }
+                } _ => {
+                    Err(TensorError::InvalidArgument(
+                        "Undefined zero value".to_string(),
+                    ))
+                }}
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(lhs)
     }
@@ -1740,7 +1743,6 @@ impl<T: TensorType + Rem<Output = T> + std::marker::Send + std::marker::Sync> Re
 /// assert_eq!(c, vec![2, 3]);
 ///
 /// ```
-
 pub fn get_broadcasted_shape(
     shape_a: &[usize],
     shape_b: &[usize],
@@ -1748,23 +1750,247 @@ pub fn get_broadcasted_shape(
     let num_dims_a = shape_a.len();
     let num_dims_b = shape_b.len();
 
-    match (num_dims_a, num_dims_b) {
-        (a, b) if a == b => {
-            let mut broadcasted_shape = Vec::with_capacity(num_dims_a);
-            for (dim_a, dim_b) in shape_a.iter().zip(shape_b.iter()) {
-                let max_dim = dim_a.max(dim_b);
-                broadcasted_shape.push(*max_dim);
-            }
-            Ok(broadcasted_shape)
+    if num_dims_a == num_dims_b {
+        let mut broadcasted_shape = Vec::with_capacity(num_dims_a);
+        for (dim_a, dim_b) in shape_a.iter().zip(shape_b.iter()) {
+            let max_dim = dim_a.max(dim_b);
+            broadcasted_shape.push(*max_dim);
         }
-        (a, b) if a < b => Ok(shape_b.to_vec()),
-        (a, b) if a > b => Ok(shape_a.to_vec()),
-        _ => Err(TensorError::DimError(
+        Ok(broadcasted_shape)
+    } else if num_dims_a < num_dims_b {
+        Ok(shape_b.to_vec())
+    } else if num_dims_a > num_dims_b {
+        Ok(shape_a.to_vec())
+    } else {
+        Err(TensorError::DimError(
             "Unknown condition for broadcasting".to_string(),
-        )),
+        ))
     }
 }
 ////////////////////////
+///
+
+/// The shape of data for some operations
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default, Copy)]
+pub enum DataFormat {
+    /// NCHW
+    #[default]
+    NCHW,
+    /// NHWC
+    NHWC,
+    /// CHW
+    CHW,
+    /// HWC
+    HWC,
+}
+
+// as str
+impl core::fmt::Display for DataFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataFormat::NCHW => write!(f, "NCHW"),
+            DataFormat::NHWC => write!(f, "NHWC"),
+            DataFormat::CHW => write!(f, "CHW"),
+            DataFormat::HWC => write!(f, "HWC"),
+        }
+    }
+}
+
+impl DataFormat {
+    /// Get the format's canonical form
+    pub fn canonical(&self) -> DataFormat {
+        match self {
+            DataFormat::NHWC => DataFormat::NCHW,
+            DataFormat::HWC => DataFormat::CHW,
+            _ => self.clone(),
+        }
+    }
+
+    /// no batch dim
+    pub fn has_no_batch(&self) -> bool {
+        match self {
+            DataFormat::CHW | DataFormat::HWC => true,
+            _ => false,
+        }
+    }
+
+    /// Convert tensor to canonical format (NCHW or CHW)
+    pub fn to_canonical<F: PrimeField + TensorType + PartialOrd + Hash>(
+        &self,
+        tensor: &mut ValTensor<F>,
+    ) -> Result<(), TensorError> {
+        match self {
+            DataFormat::NHWC => {
+                // For ND: Move channels from last axis to position after batch
+                let ndims = tensor.dims().len();
+                if ndims > 2 {
+                    tensor.move_axis(ndims - 1, 1)?;
+                }
+            }
+            DataFormat::HWC => {
+                // For ND: Move channels from last axis to first position
+                let ndims = tensor.dims().len();
+                if ndims > 1 {
+                    tensor.move_axis(ndims - 1, 0)?;
+                }
+            }
+            _ => {} // NCHW/CHW are already in canonical format
+        }
+        Ok(())
+    }
+
+    /// Convert tensor from canonical format to target format
+    pub fn from_canonical<F: PrimeField + TensorType + PartialOrd + Hash>(
+        &self,
+        tensor: &mut ValTensor<F>,
+    ) -> Result<(), TensorError> {
+        match self {
+            DataFormat::NHWC => {
+                // Move channels from position 1 to end
+                let ndims = tensor.dims().len();
+                if ndims > 2 {
+                    tensor.move_axis(1, ndims - 1)?;
+                }
+            }
+            DataFormat::HWC => {
+                // Move channels from position 0 to end
+                let ndims = tensor.dims().len();
+                if ndims > 1 {
+                    tensor.move_axis(0, ndims - 1)?;
+                }
+            }
+            _ => {} // NCHW/CHW don't need conversion
+        }
+        Ok(())
+    }
+
+    /// Get the position of the channel dimension
+    pub fn get_channel_dim(&self, ndims: usize) -> usize {
+        match self {
+            DataFormat::NCHW => 1,
+            DataFormat::NHWC => ndims - 1,
+            DataFormat::CHW => 0,
+            DataFormat::HWC => ndims - 1,
+        }
+    }
+}
+/// The shape of the kernel for some operations
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default, Copy)]
+pub enum KernelFormat {
+    /// HWIO
+    HWIO,
+    /// OIHW
+    #[default]
+    OIHW,
+    /// OHWI
+    OHWI,
+}
+
+impl core::fmt::Display for KernelFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KernelFormat::HWIO => write!(f, "HWIO"),
+            KernelFormat::OIHW => write!(f, "OIHW"),
+            KernelFormat::OHWI => write!(f, "OHWI"),
+        }
+    }
+}
+
+impl KernelFormat {
+    /// Get the format's canonical form
+    pub fn canonical(&self) -> KernelFormat {
+        match self {
+            KernelFormat::HWIO => KernelFormat::OIHW,
+            KernelFormat::OHWI => KernelFormat::OIHW,
+            _ => self.clone(),
+        }
+    }
+
+    /// Convert kernel to canonical format (OIHW)
+    pub fn to_canonical<F: PrimeField + TensorType + PartialOrd + Hash>(
+        &self,
+        kernel: &mut ValTensor<F>,
+    ) -> Result<(), TensorError> {
+        match self {
+            KernelFormat::HWIO => {
+                let kdims = kernel.dims().len();
+                // Move output channels from last to first
+                kernel.move_axis(kdims - 1, 0)?;
+                // Move input channels from new last to second position
+                kernel.move_axis(kdims - 1, 1)?;
+            }
+            KernelFormat::OHWI => {
+                let kdims = kernel.dims().len();
+                // Move input channels from last to second position
+                kernel.move_axis(kdims - 1, 1)?;
+            }
+            _ => {} // OIHW is already canonical
+        }
+        Ok(())
+    }
+
+    /// Convert kernel from canonical format to target format
+    pub fn from_canonical<F: PrimeField + TensorType + PartialOrd + Hash>(
+        &self,
+        kernel: &mut ValTensor<F>,
+    ) -> Result<(), TensorError> {
+        match self {
+            KernelFormat::HWIO => {
+                let kdims = kernel.dims().len();
+                // Move input channels from second position to last
+                kernel.move_axis(1, kdims - 1)?;
+                // Move output channels from first to last
+                kernel.move_axis(0, kdims - 1)?;
+            }
+            KernelFormat::OHWI => {
+                let kdims = kernel.dims().len();
+                // Move input channels from second position to last
+                kernel.move_axis(1, kdims - 1)?;
+            }
+            _ => {} // OIHW doesn't need conversion
+        }
+        Ok(())
+    }
+
+    /// Get the position of input and output channel dimensions
+    pub fn get_channel_dims(&self, ndims: usize) -> (usize, usize) {
+        // (input_ch, output_ch)
+        match self {
+            KernelFormat::OIHW => (1, 0),
+            KernelFormat::HWIO => (ndims - 2, ndims - 1),
+            KernelFormat::OHWI => (ndims - 1, 0),
+        }
+    }
+}
+
+#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
+impl From<tract_onnx::tract_hir::ops::nn::DataFormat> for DataFormat {
+    fn from(fmt: tract_onnx::tract_hir::ops::nn::DataFormat) -> Self {
+        match fmt {
+            tract_onnx::tract_hir::ops::nn::DataFormat::NCHW => DataFormat::NCHW,
+            tract_onnx::tract_hir::ops::nn::DataFormat::NHWC => DataFormat::NHWC,
+            tract_onnx::tract_hir::ops::nn::DataFormat::CHW => DataFormat::CHW,
+            tract_onnx::tract_hir::ops::nn::DataFormat::HWC => DataFormat::HWC,
+        }
+    }
+}
+
+#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
+impl From<tract_onnx::tract_hir::tract_core::ops::cnn::conv::KernelFormat> for KernelFormat {
+    fn from(fmt: tract_onnx::tract_hir::tract_core::ops::cnn::conv::KernelFormat) -> Self {
+        match fmt {
+            tract_onnx::tract_hir::tract_core::ops::cnn::conv::KernelFormat::HWIO => {
+                KernelFormat::HWIO
+            }
+            tract_onnx::tract_hir::tract_core::ops::cnn::conv::KernelFormat::OIHW => {
+                KernelFormat::OIHW
+            }
+            tract_onnx::tract_hir::tract_core::ops::cnn::conv::KernelFormat::OHWI => {
+                KernelFormat::OHWI
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1799,67 +2025,5 @@ mod tests {
         let a = Tensor::<IntegerRep>::new(Some(&[1, 2, 3, 4, 5, 6]), &[2, 3]).unwrap();
         let b = Tensor::<IntegerRep>::new(Some(&[1, 4]), &[2, 1]).unwrap();
         assert_eq!(a.get_slice(&[0..2, 0..1]).unwrap(), b);
-    }
-
-    #[test]
-    #[cfg(feature = "metal")]
-    fn tensor_metal_int() {
-        let a = Tensor::<i64>::new(Some(&[1, 2, 3, 4]), &[2, 2]).unwrap();
-        let b = Tensor::<i64>::new(Some(&[1, 2, 3, 4]), &[2, 2]).unwrap();
-        let c = metal_tensor_op(&a, &b, "add");
-        assert_eq!(c, Tensor::new(Some(&[2, 4, 6, 8]), &[2, 2]).unwrap());
-
-        let c = metal_tensor_op(&a, &b, "sub");
-        assert_eq!(c, Tensor::new(Some(&[0, 0, 0, 0]), &[2, 2]).unwrap());
-
-        let c = metal_tensor_op(&a, &b, "mul");
-        assert_eq!(c, Tensor::new(Some(&[1, 4, 9, 16]), &[2, 2]).unwrap());
-    }
-
-    #[test]
-    #[cfg(feature = "metal")]
-    fn tensor_metal_felt() {
-        use halo2curves::bn256::Fr;
-
-        let a = Tensor::<Fr>::new(
-            Some(&[Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]),
-            &[2, 2],
-        )
-        .unwrap();
-        let b = Tensor::<Fr>::new(
-            Some(&[Fr::from(1), Fr::from(2), Fr::from(3), Fr::from(4)]),
-            &[2, 2],
-        )
-        .unwrap();
-
-        let c = metal_tensor_op(&a, &b, "add");
-        assert_eq!(
-            c,
-            Tensor::<Fr>::new(
-                Some(&[Fr::from(2), Fr::from(4), Fr::from(6), Fr::from(8)]),
-                &[2, 2],
-            )
-            .unwrap()
-        );
-
-        let c = metal_tensor_op(&a, &b, "sub");
-        assert_eq!(
-            c,
-            Tensor::<Fr>::new(
-                Some(&[Fr::from(0), Fr::from(0), Fr::from(0), Fr::from(0)]),
-                &[2, 2],
-            )
-            .unwrap()
-        );
-
-        let c = metal_tensor_op(&a, &b, "mul");
-        assert_eq!(
-            c,
-            Tensor::<Fr>::new(
-                Some(&[Fr::from(1), Fr::from(4), Fr::from(9), Fr::from(16)]),
-                &[2, 2],
-            )
-            .unwrap()
-        );
     }
 }

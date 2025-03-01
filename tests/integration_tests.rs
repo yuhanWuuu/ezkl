@@ -1,9 +1,7 @@
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
 #[cfg(test)]
 mod native_tests {
-
-    use ezkl::circuit::Tolerance;
-    use ezkl::fieldutils::{felt_to_integer_rep, integer_rep_to_felt, IntegerRep};
+    
     // use ezkl::circuit::table::RESERVED_BLINDING_ROWS_PAD;
     use ezkl::graph::input::{FileSource, FileSourceInner, GraphData};
     use ezkl::graph::{DataSource, GraphSettings, GraphWitness};
@@ -22,6 +20,8 @@ mod native_tests {
     #[allow(dead_code)]
     static COMPILE_WASM: Once = Once::new();
     static ENV_SETUP: Once = Once::new();
+
+    const TEST_BINARY: &str = "test-runs/ezkl";
 
     //Sure to run this once
     #[derive(Debug)]
@@ -75,9 +75,8 @@ mod native_tests {
         });
     }
 
-    ///
     #[allow(dead_code)]
-    pub fn init_wasm() {
+    fn init_wasm() {
         COMPILE_WASM.call_once(|| {
             build_wasm_ezkl();
         });
@@ -104,7 +103,7 @@ mod native_tests {
 
     fn download_srs(logrows: u32, commitment: Commitments) {
         // if does not exist, download it
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "get-srs",
                 "--logrows",
@@ -187,13 +186,15 @@ mod native_tests {
 
     const PF_FAILURE_AGGR: &str = "examples/test_failure_aggr_proof.json";
 
-    const LARGE_TESTS: [&str; 6] = [
+    const LARGE_TESTS: [&str; 8] = [
         "self_attention",
         "nanoGPT",
         "multihead_attention",
         "mobilenet",
         "mnist_gan",
         "smallworm",
+        "fr_age",
+        "1d_conv",
     ];
 
     const ACCURACY_CAL_TESTS: [&str; 6] = [
@@ -205,62 +206,62 @@ mod native_tests {
         "1l_tiny_div",
     ];
 
-    const TESTS: [&str; 96] = [
-        "1l_mlp", //0
-        "1l_slice",
-        "1l_concat",
-        "1l_flatten",
+    const TESTS: [&str; 99] = [
+        "1l_mlp",     //0
+        "1l_slice",   //1
+        "1l_concat",  //2
+        "1l_flatten", //3
         // "1l_average",
-        "1l_div",
-        "1l_pad", // 5
-        "1l_reshape",
-        "1l_eltwise_div",
-        "1l_sigmoid",
-        "1l_sqrt",
-        "1l_softmax", //10
+        "1l_div",         //4
+        "1l_pad",         // 5
+        "1l_reshape",     //6
+        "1l_eltwise_div", //7
+        "1l_sigmoid",     //8
+        "1l_sqrt",        //9
+        "1l_softmax",     //10
         // "1l_instance_norm",
-        "1l_batch_norm",
-        "1l_prelu",
-        "1l_leakyrelu",
-        "1l_gelu_noappx",
+        "1l_batch_norm",  //11
+        "1l_prelu",       //12
+        "1l_leakyrelu",   //13
+        "1l_gelu_noappx", //14
         // "1l_gelu_tanh_appx",
-        "1l_relu", //15
-        "1l_downsample",
-        "1l_tanh",
-        "2l_relu_sigmoid_small",
-        "2l_relu_fc",
-        "2l_relu_small", //20
-        "2l_relu_sigmoid",
-        "1l_conv",
-        "2l_sigmoid_small",
-        "2l_relu_sigmoid_conv",
-        "3l_relu_conv_fc", //25
-        "4l_relu_conv_fc",
-        "1l_erf",
-        "1l_var",
-        "1l_elu",
-        "min", //30
-        "max",
-        "1l_max_pool",
-        "1l_conv_transpose",
-        "1l_upsample",
-        "1l_identity", //35
-        "idolmodel",   // too big evm
-        "trig",        // too big evm
-        "prelu_gmm",
-        "lstm",
-        "rnn", //40
-        "quantize_dequantize",
-        "1l_where",
-        "boolean",
-        "boolean_identity",
-        "decision_tree", // 45
-        "random_forest",
-        "gradient_boosted_trees",
-        "1l_topk",
-        "xgboost",
-        "lightgbm", //50
-        "hummingbird_decision_tree",
+        "1l_relu",                   //15
+        "1l_downsample",             //16
+        "1l_tanh",                   //17
+        "2l_relu_sigmoid_small",     //18
+        "2l_relu_fc",                //19
+        "2l_relu_small",             //20
+        "2l_relu_sigmoid",           //21
+        "1l_conv",                   //22
+        "2l_sigmoid_small",          //23
+        "2l_relu_sigmoid_conv",      //24
+        "3l_relu_conv_fc",           //25
+        "4l_relu_conv_fc",           //26
+        "1l_erf",                    //27
+        "1l_var",                    //28
+        "1l_elu",                    //29
+        "min",                       //30
+        "max",                       //31
+        "1l_max_pool",               //32
+        "1l_conv_transpose",         //33
+        "1l_upsample",               //34
+        "1l_identity",               //35
+        "idolmodel",                 // too big evm
+        "trig",                      // too big evm
+        "prelu_gmm",                 //38
+        "lstm",                      //39
+        "rnn",                       //40
+        "quantize_dequantize",       //41
+        "1l_where",                  //42
+        "boolean",                   //43
+        "boolean_identity",          //44
+        "decision_tree",             // 45
+        "random_forest",             //46
+        "gradient_boosted_trees",    //47
+        "1l_topk",                   //48
+        "xgboost",                   //49
+        "lightgbm",                  //50
+        "hummingbird_decision_tree", //51
         "oh_decision_tree",
         "linear_svc",
         "gather_elements",
@@ -306,6 +307,9 @@ mod native_tests {
         "lenet_5",     // 93
         "rsqrt",       // 94
         "log",         // 95
+        "exp",         // 96
+        "general_exp", // 97
+        "integer_div", // 98
     ];
 
     const WASM_TESTS: [&str; 46] = [
@@ -393,29 +397,29 @@ mod native_tests {
     const TESTS_AGGR: [&str; 3] = ["1l_mlp", "1l_flatten", "1l_average"];
 
     const TESTS_EVM: [&str; 23] = [
-        "1l_mlp",
-        "1l_flatten",
-        "1l_average",
-        "1l_reshape",
-        "1l_sigmoid",
-        "1l_div",
-        "1l_sqrt",
-        "1l_prelu",
-        "1l_var",
-        "1l_leakyrelu",
-        "1l_gelu_noappx",
-        "1l_relu",
-        "1l_tanh",
-        "2l_relu_sigmoid_small",
-        "2l_relu_small",
-        "min",
-        "max",
-        "1l_max_pool",
-        "idolmodel",
-        "1l_identity",
-        "lstm",
-        "rnn",
-        "quantize_dequantize",
+        "1l_mlp",                // 0
+        "1l_flatten",            // 1
+        "1l_average",            // 2
+        "1l_reshape",            // 3
+        "1l_sigmoid",            // 4
+        "1l_div",                // 5
+        "1l_sqrt",               // 6
+        "1l_prelu",              // 7
+        "1l_var",                // 8
+        "1l_leakyrelu",          // 9
+        "1l_gelu_noappx",        // 10
+        "1l_relu",               // 11
+        "1l_tanh",               // 12
+        "2l_relu_sigmoid_small", // 13
+        "2l_relu_small",         // 14
+        "min",                   // 15
+        "max",                   // 16
+        "1l_max_pool",           // 17
+        "idolmodel",             // 18
+        "1l_identity",           // 19
+        "lstm",                  // 20
+        "rnn",                   // 21
+        "quantize_dequantize",   // 22
     ];
 
     const TESTS_EVM_AGGR: [&str; 18] = [
@@ -490,7 +494,7 @@ mod native_tests {
             #[cfg(feature="icicle")]
             seq!(N in 0..=2 {
             #(#[test_case(TESTS_AGGR[N])])*
-            fn aggr_prove_and_verify_(test: &str) {
+            fn kzg_aggr_prove_and_verify_(test: &str) {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(test_dir.path().to_str().unwrap(), test);
@@ -518,7 +522,7 @@ mod native_tests {
             use crate::native_tests::run_js_tests;
             use crate::native_tests::render_circuit;
             use crate::native_tests::model_serialization_different_binaries;
-            use rand::Rng;
+            
             use tempdir::TempDir;
             use ezkl::Commitments;
 
@@ -539,12 +543,12 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "fixed", "public", 1, "accuracy", None, 0.0, false);
+                mock(path, test.to_string(), "public", "fixed", "public", 1, "accuracy", None, false, None, None);
                 test_dir.close().unwrap();
             }
         });
 
-            seq!(N in 0..=95 {
+            seq!(N in 0..=98 {
 
             #(#[test_case(TESTS[N])])*
             #[ignore]
@@ -604,7 +608,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "private", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "private", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -614,33 +618,21 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "private", "public", 1, "resources", None, 0.0, true);
+                mock(path, test.to_string(), "private", "private", "public", 1, "resources", None, true, Some(8194), Some(4));
                 test_dir.close().unwrap();
             }
-
-            #(#[test_case(TESTS[N])])*
-            fn mock_tolerance_public_outputs_(test: &str) {
-                crate::native_tests::init_binary();
-                let test_dir = TempDir::new(test).unwrap();
-                let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                // gen random number between 0.0 and 1.0
-                let tolerance = rand::thread_rng().gen_range(0.0..1.0) * 100.0;
-                mock(path, test.to_string(), "private", "private", "public", 1, "resources", None, tolerance, false);
-                test_dir.close().unwrap();
-            }
-
 
 
             #(#[test_case(TESTS[N])])*
             fn mock_large_batch_public_outputs_(test: &str) {
                 // currently variable output rank is not supported in ONNX
-                if test != "gather_nd" && test != "lstm_large"  && test != "lstm_medium" {
+                if test != "gather_nd" && test != "lstm_large"  && test != "lstm_medium" && test != "scatter_nd" {
                     crate::native_tests::init_binary();
                     let test_dir = TempDir::new(test).unwrap();
                     let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
                     let large_batch_dir = &format!("large_batches_{}", test);
                     crate::native_tests::mk_data_batches_(path, test, &large_batch_dir, 10);
-                    mock(path, large_batch_dir.to_string(), "private", "private", "public", 10, "resources", None, 0.0, false);
+                    mock(path, large_batch_dir.to_string(), "private", "private", "public", 10, "resources", None, false, None, None);
                     test_dir.close().unwrap();
                 }
             }
@@ -650,7 +642,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "private", "private", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "private", "private", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -659,7 +651,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "hashed", "private", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "hashed", "private", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -668,7 +660,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "fixed", "private", "private", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "fixed", "private", "private", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -677,7 +669,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "private", "fixed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "private", "fixed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -686,7 +678,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "fixed", "private", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "fixed", "private", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -695,7 +687,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "hashed", "private", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "hashed", "private", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -704,7 +696,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "polycommit", "private", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "polycommit", "private", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -714,7 +706,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "hashed", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "hashed", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -724,7 +716,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "polycommit", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "polycommit", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -733,7 +725,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "private", "hashed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "private", "hashed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -743,7 +735,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "private", "polycommit", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "private", "polycommit", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -752,7 +744,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "fixed", "hashed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "fixed", "hashed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -762,7 +754,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "public", "polycommit", "hashed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "public", "polycommit", "hashed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -772,7 +764,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "polycommit", "polycommit", "polycommit", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "polycommit", "polycommit", "polycommit", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -782,7 +774,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "hashed", "private", "hashed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "hashed", "private", "hashed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -792,7 +784,7 @@ mod native_tests {
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
                 // needs an extra row for the large model
-                mock(path, test.to_string(),"hashed", "hashed", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(),"hashed", "hashed", "public", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -802,7 +794,7 @@ mod native_tests {
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
                 // needs an extra row for the large model
-                mock(path, test.to_string(),"hashed", "hashed", "hashed", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(),"hashed", "hashed", "hashed", 1, "resources", None, false, None, None);
                 test_dir.close().unwrap();
             }
 
@@ -961,7 +953,7 @@ mod native_tests {
 
             });
 
-            seq!(N in 0..=5 {
+            seq!(N in 0..=7 {
 
             #(#[test_case(LARGE_TESTS[N])])*
             #[ignore]
@@ -979,7 +971,7 @@ mod native_tests {
                 crate::native_tests::init_binary();
                 let test_dir = TempDir::new(test).unwrap();
                 let path = test_dir.path().to_str().unwrap(); crate::native_tests::mv_test_(path, test);
-                mock(path, test.to_string(), "private", "fixed", "public", 1, "resources", None, 0.0, false);
+                mock(path, test.to_string(), "private", "fixed", "public", 1, "resources", None, false, None, Some(5));
                 test_dir.close().unwrap();
             }
         });
@@ -1455,10 +1447,10 @@ mod native_tests {
         batch_size: usize,
         cal_target: &str,
         scales_to_use: Option<Vec<u32>>,
-        tolerance: f32,
         bounded_lookup_log: bool,
+        decomp_base: Option<usize>,
+        decomp_legs: Option<usize>,
     ) {
-        let mut tolerance = tolerance;
         gen_circuit_settings_and_witness(
             test_dir,
             example_name.clone(),
@@ -1469,134 +1461,24 @@ mod native_tests {
             cal_target,
             scales_to_use,
             2,
-            &mut tolerance,
             Commitments::KZG,
             2,
             bounded_lookup_log,
+            decomp_base,
+            decomp_legs,
         );
 
-        if tolerance > 0.0 {
-            // load witness and shift the output by a small amount that is less than tolerance percent
-            let witness = GraphWitness::from_path(
-                format!("{}/{}/witness.json", test_dir, example_name).into(),
-            )
-            .unwrap();
-            let witness = witness.clone();
-            let outputs = witness.outputs.clone();
-
-            // get values as i64
-            let output_perturbed_safe: Vec<Vec<halo2curves::bn256::Fr>> = outputs
-                .iter()
-                .map(|sv| {
-                    sv.iter()
-                        .map(|v| {
-                            // randomly perturb by a small amount less than tolerance
-                            let perturbation = if v == &halo2curves::bn256::Fr::zero() {
-                                halo2curves::bn256::Fr::zero()
-                            } else {
-                                integer_rep_to_felt(
-                                    (felt_to_integer_rep(*v) as f32
-                                        * (rand::thread_rng().gen_range(-0.01..0.01) * tolerance))
-                                        as IntegerRep,
-                                )
-                            };
-
-                            *v + perturbation
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-
-            // get values as i64
-            let output_perturbed_bad: Vec<Vec<halo2curves::bn256::Fr>> = outputs
-                .iter()
-                .map(|sv| {
-                    sv.iter()
-                        .map(|v| {
-                            // randomly perturb by a small amount less than tolerance
-                            let perturbation = if v == &halo2curves::bn256::Fr::zero() {
-                                halo2curves::bn256::Fr::from(2)
-                            } else {
-                                integer_rep_to_felt(
-                                    (felt_to_integer_rep(*v) as f32
-                                        * (rand::thread_rng().gen_range(0.02..0.1) * tolerance))
-                                        as IntegerRep,
-                                )
-                            };
-                            *v + perturbation
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-
-            let good_witness = GraphWitness {
-                outputs: output_perturbed_safe,
-                ..witness.clone()
-            };
-
-            // save
-            good_witness
-                .save(format!("{}/{}/witness_ok.json", test_dir, example_name).into())
-                .unwrap();
-
-            let bad_witness = GraphWitness {
-                outputs: output_perturbed_bad,
-                ..witness.clone()
-            };
-
-            // save
-            bad_witness
-                .save(format!("{}/{}/witness_bad.json", test_dir, example_name).into())
-                .unwrap();
-
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
-                .args([
-                    "mock",
-                    "-W",
-                    format!("{}/{}/witness.json", test_dir, example_name).as_str(),
-                    "-M",
-                    format!("{}/{}/network.compiled", test_dir, example_name).as_str(),
-                ])
-                .status()
-                .expect("failed to execute process");
-            assert!(status.success());
-
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
-                .args([
-                    "mock",
-                    "-W",
-                    format!("{}/{}/witness_ok.json", test_dir, example_name).as_str(),
-                    "-M",
-                    format!("{}/{}/network.compiled", test_dir, example_name).as_str(),
-                ])
-                .status()
-                .expect("failed to execute process");
-            assert!(status.success());
-
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
-                .args([
-                    "mock",
-                    "-W",
-                    format!("{}/{}/witness_bad.json", test_dir, example_name).as_str(),
-                    "-M",
-                    format!("{}/{}/network.compiled", test_dir, example_name).as_str(),
-                ])
-                .status()
-                .expect("failed to execute process");
-            assert!(!status.success());
-        } else {
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
-                .args([
-                    "mock",
-                    "-W",
-                    format!("{}/{}/witness.json", test_dir, example_name).as_str(),
-                    "-M",
-                    format!("{}/{}/network.compiled", test_dir, example_name).as_str(),
-                ])
-                .status()
-                .expect("failed to execute process");
-            assert!(status.success());
-        }
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
+            .args([
+                "mock",
+                "-W",
+                format!("{}/{}/witness.json", test_dir, example_name).as_str(),
+                "-M",
+                format!("{}/{}/network.compiled", test_dir, example_name).as_str(),
+            ])
+            .status()
+            .expect("failed to execute process");
+        assert!(status.success());
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1610,10 +1492,11 @@ mod native_tests {
         cal_target: &str,
         scales_to_use: Option<Vec<u32>>,
         num_inner_columns: usize,
-        tolerance: &mut f32,
         commitment: Commitments,
         lookup_safety_margin: usize,
         bounded_lookup_log: bool,
+        decomp_base: Option<usize>,
+        decomp_legs: Option<usize>,
     ) {
         let mut args = vec![
             "gen-settings".to_string(),
@@ -1623,20 +1506,36 @@ mod native_tests {
                 "--settings-path={}/{}/settings.json",
                 test_dir, example_name
             ),
-            format!("--variables=batch_size->{}", batch_size),
+            format!(
+                "--variables=batch_size->{},sequence_length->100,<Sym1>->1",
+                batch_size
+            ),
             format!("--input-visibility={}", input_visibility),
             format!("--param-visibility={}", param_visibility),
             format!("--output-visibility={}", output_visibility),
             format!("--num-inner-cols={}", num_inner_columns),
-            format!("--tolerance={}", tolerance),
             format!("--commitment={}", commitment),
+            format!("--logrows={}", 22),
         ];
+
+        // if output-visibility is fixed set --range-check-inputs-outputs to False
+        if output_visibility == "fixed" {
+            args.push("--ignore-range-check-inputs-outputs".to_string());
+        }
+
+        if let Some(decomp_base) = decomp_base {
+            args.push(format!("--decomp-base={}", decomp_base));
+        }
+
+        if let Some(decomp_legs) = decomp_legs {
+            args.push(format!("--decomp-legs={}", decomp_legs));
+        }
 
         if bounded_lookup_log {
             args.push("--bounded-log-lookup".to_string());
         }
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(args)
             .status()
             .expect("failed to execute process");
@@ -1666,31 +1565,13 @@ mod native_tests {
             calibrate_args.push(scales);
         }
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(calibrate_args)
             .status()
             .expect("failed to execute process");
         assert!(status.success());
 
-        let mut settings =
-            GraphSettings::load(&format!("{}/{}/settings.json", test_dir, example_name).into())
-                .unwrap();
-
-        let any_output_scales_smol = settings.model_output_scales.iter().any(|s| *s <= 0);
-
-        if any_output_scales_smol {
-            // set the tolerance to 0.0
-            settings.run_args.tolerance = Tolerance {
-                val: 0.0,
-                scale: 0.0.into(),
-            };
-            settings
-                .save(&format!("{}/{}/settings.json", test_dir, example_name).into())
-                .unwrap();
-            *tolerance = 0.0;
-        }
-
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "compile-circuit",
                 "-M",
@@ -1702,12 +1583,11 @@ mod native_tests {
                     test_dir, example_name
                 ),
             ])
-            .stdout(std::process::Stdio::null())
             .status()
             .expect("failed to execute process");
         assert!(status.success());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "gen-witness",
                 "-D",
@@ -1745,10 +1625,11 @@ mod native_tests {
             cal_target,
             None,
             2,
-            &mut 0.0,
             Commitments::KZG,
             2,
             false,
+            None,
+            None,
         );
 
         println!(
@@ -1773,7 +1654,7 @@ mod native_tests {
 
     // Mock prove (fast, but does not cover some potential issues)
     fn render_circuit(test_dir: &str, example_name: String) {
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "render-circuit",
                 "-M",
@@ -1804,7 +1685,7 @@ mod native_tests {
             Commitments::KZG,
             2,
         );
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "mock-aggregate",
                 "--logrows=23",
@@ -1842,7 +1723,7 @@ mod native_tests {
 
         download_srs(23, commitment);
         // now setup-aggregate
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "setup-aggregate",
                 "--sample-snarks",
@@ -1858,7 +1739,7 @@ mod native_tests {
             .expect("failed to execute process");
         assert!(status.success());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "aggregate",
                 "--logrows=23",
@@ -1873,7 +1754,7 @@ mod native_tests {
             .status()
             .expect("failed to execute process");
         assert!(status.success());
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "verify-aggr",
                 "--logrows=23",
@@ -1923,7 +1804,7 @@ mod native_tests {
         let private_key = format!("--private-key={}", *ANVIL_DEFAULT_PRIVATE_KEY);
 
         // create encoded calldata
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "encode-evm-calldata",
                 "--proof-path",
@@ -1945,7 +1826,7 @@ mod native_tests {
 
         let args = build_args(base_args, &sol_arg);
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(args)
             .status()
             .expect("failed to execute process");
@@ -1961,7 +1842,7 @@ mod native_tests {
             private_key.as_str(),
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -1983,14 +1864,14 @@ mod native_tests {
             rpc_arg.as_str(),
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&base_args)
             .status()
             .expect("failed to execute process");
         assert!(status.success());
         // As sanity check, add example that should fail.
         base_args[2] = PF_FAILURE_AGGR;
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(base_args)
             .status()
             .expect("failed to execute process");
@@ -2029,17 +1910,18 @@ mod native_tests {
             target_str,
             scales_to_use,
             num_inner_columns,
-            &mut 0.0,
             commitment,
             lookup_safety_margin,
             false,
+            None,
+            None,
         );
 
         let settings_path = format!("{}/{}/settings.json", test_dir, example_name);
 
         init_params(settings_path.clone().into());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "setup",
                 "-M",
@@ -2054,7 +1936,7 @@ mod native_tests {
             .expect("failed to execute process");
         assert!(status.success());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "prove",
                 "-W",
@@ -2072,7 +1954,7 @@ mod native_tests {
             .expect("failed to execute process");
         assert!(status.success());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "swap-proof-commitments",
                 "--proof-path",
@@ -2084,7 +1966,7 @@ mod native_tests {
             .expect("failed to execute process");
         assert!(status.success());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "verify",
                 format!("--settings-path={}", settings_path).as_str(),
@@ -2107,7 +1989,7 @@ mod native_tests {
         // get_srs for the graph_settings_num_instances
         download_srs(1, graph_settings.run_args.commitment.into());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "verify",
                 format!("--settings-path={}", settings_path).as_str(),
@@ -2157,7 +2039,7 @@ mod native_tests {
         let settings_arg = format!("--settings-path={}", settings_path);
 
         // create encoded calldata
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "encode-evm-calldata",
                 "--proof-path",
@@ -2177,7 +2059,7 @@ mod native_tests {
         args.push("--sol-code-path");
         args.push(sol_arg.as_str());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2189,7 +2071,7 @@ mod native_tests {
         args.push("--sol-code-path");
         args.push(sol_arg.as_str());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2211,14 +2093,14 @@ mod native_tests {
             deployed_addr_arg.as_str(),
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
         assert!(status.success());
         // As sanity check, add example that should fail.
         args[2] = PF_FAILURE;
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(args)
             .status()
             .expect("failed to execute process");
@@ -2226,6 +2108,7 @@ mod native_tests {
     }
 
     // prove-serialize-verify, the usual full path
+    #[allow(clippy::too_many_arguments)]
     fn kzg_evm_prove_and_verify_reusable_verifier(
         num_inner_columns: usize,
         test_dir: &str,
@@ -2276,7 +2159,7 @@ mod native_tests {
                     "--reusable",
                 ];
 
-                let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+                let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                     .args(&args)
                     .status()
                     .expect("failed to execute process");
@@ -2291,7 +2174,7 @@ mod native_tests {
                     "-C=verifier/reusable",
                 ];
 
-                let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+                let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                     .args(&args)
                     .status()
                     .expect("failed to execute process");
@@ -2320,7 +2203,7 @@ mod native_tests {
             &sol_arg_vk,
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2335,7 +2218,7 @@ mod native_tests {
             "-C=vka",
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2348,7 +2231,7 @@ mod native_tests {
         let deployed_addr_arg_vk = format!("--addr-vk={}", addr_vk);
 
         // create encoded calldata
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "encode-evm-calldata",
                 "--proof-path",
@@ -2371,7 +2254,7 @@ mod native_tests {
             deployed_addr_arg_vk.as_str(),
         ];
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2404,7 +2287,7 @@ mod native_tests {
             // Verify the modified proof (should fail)
             let mut args_mod = args.clone();
             args_mod[2] = &modified_pf_arg;
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+            let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                 .args(&args_mod)
                 .status()
                 .expect("failed to execute process");
@@ -2461,10 +2344,11 @@ mod native_tests {
             // we need the accuracy
             Some(vec![4]),
             1,
-            &mut 0.0,
             Commitments::KZG,
             2,
             false,
+            None,
+            None,
         );
 
         let model_path = format!("{}/{}/network.compiled", test_dir, example_name);
@@ -2480,7 +2364,7 @@ mod native_tests {
         let test_input_source = format!("--input-source={}", input_source);
         let test_output_source = format!("--output-source={}", output_source);
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "setup",
                 "-M",
@@ -2495,7 +2379,7 @@ mod native_tests {
         assert!(status.success());
 
         // generate the witness, passing the vk path to generate the necessary kzg commits
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "gen-witness",
                 "-D",
@@ -2552,7 +2436,7 @@ mod native_tests {
             }
             input.save(data_path.clone().into()).unwrap();
 
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+            let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                 .args([
                     "setup-test-evm-data",
                     "-D",
@@ -2570,7 +2454,7 @@ mod native_tests {
             assert!(status.success());
         }
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "prove",
                 "-W",
@@ -2591,7 +2475,7 @@ mod native_tests {
         let settings_arg = format!("--settings-path={}", settings_path);
 
         // create encoded calldata
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "encode-evm-calldata",
                 "--proof-path",
@@ -2610,7 +2494,7 @@ mod native_tests {
         args.push("--sol-code-path");
         args.push(sol_arg.as_str());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2631,7 +2515,7 @@ mod native_tests {
         args.push("--sol-code-path");
         args.push(sol_arg.as_str());
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
@@ -2654,7 +2538,7 @@ mod native_tests {
             create_da_args.push(test_on_chain_data_path.as_str());
         }
 
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&create_da_args)
             .status()
             .expect("failed to execute process");
@@ -2667,7 +2551,7 @@ mod native_tests {
         };
 
         let addr_path_da_arg = format!("--addr-path={}/{}/addr_da.txt", test_dir, example_name);
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args([
                 "deploy-evm-da",
                 format!("--settings-path={}", settings_path).as_str(),
@@ -2705,14 +2589,14 @@ mod native_tests {
             deployed_addr_da_arg.as_str(),
             rpc_arg.as_str(),
         ];
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(&args)
             .status()
             .expect("failed to execute process");
         assert!(status.success());
         // Create a new set of test on chain data only for the on-chain input source
         if input_source != "file" || output_source != "file" {
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+            let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                 .args([
                     "setup-test-evm-data",
                     "-D",
@@ -2739,7 +2623,7 @@ mod native_tests {
                 test_on_chain_data_path.as_str(),
                 rpc_arg.as_str(),
             ];
-            let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+            let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
                 .args(&args)
                 .status()
                 .expect("failed to execute process");
@@ -2755,7 +2639,7 @@ mod native_tests {
             deployed_addr_da_arg.as_str(),
             rpc_arg.as_str(),
         ];
-        let status = Command::new(format!("{}/release/ezkl", *CARGO_TARGET_DIR))
+        let status = Command::new(format!("{}/{}", *CARGO_TARGET_DIR, TEST_BINARY))
             .args(args)
             .status()
             .expect("failed to execute process");
@@ -2766,18 +2650,28 @@ mod native_tests {
         #[cfg(feature = "icicle")]
         let args = [
             "build",
-            "--release",
+            "--profile=test-runs",
             "--bin",
             "ezkl",
             "--features",
             "icicle",
         ];
-        #[cfg(not(feature = "icicle"))]
-        let args = ["build", "--release", "--bin", "ezkl"];
+        #[cfg(feature = "macos-metal")]
+        let args = [
+            "build",
+            "--profile=test-runs",
+            "--bin",
+            "ezkl",
+            "--features",
+            "macos-metal",
+        ];
+        // not macos-metal and not icicle
+        #[cfg(all(not(feature = "icicle"), not(feature = "macos-metal")))]
+        let args = ["build", "--profile=test-runs", "--bin", "ezkl"];
         #[cfg(not(feature = "mv-lookup"))]
         let args = [
             "build",
-            "--release",
+            "--profile=test-runs",
             "--bin",
             "ezkl",
             "--no-default-features",
@@ -2798,7 +2692,7 @@ mod native_tests {
         let status = Command::new("wasm-pack")
             .args([
                 "build",
-                "--release",
+                "--profile=test-runs",
                 "--target",
                 "nodejs",
                 "--out-dir",

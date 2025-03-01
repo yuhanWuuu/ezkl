@@ -6,23 +6,16 @@ on:
         description: "Test scenario tags"
 
 jobs:
-  bench_elgamal:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly-2023-06-27
-          override: true
-          components: rustfmt, clippy
-      - name: Bench elgamal
-        run: cargo bench --verbose --bench elgamal
 
   bench_poseidon:
+    permissions:
+      contents: read
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -31,11 +24,15 @@ jobs:
         run: cargo bench --verbose --bench poseidon
 
   bench_einsum_accum_matmul:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -44,11 +41,15 @@ jobs:
         run: cargo bench --verbose --bench accum_einsum_matmul
 
   bench_accum_matmul_relu:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -57,11 +58,15 @@ jobs:
         run: cargo bench --verbose --bench accum_matmul_relu
 
   bench_accum_matmul_relu_overflow:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -70,11 +75,15 @@ jobs:
         run: cargo bench --verbose --bench accum_matmul_relu_overflow
 
   bench_relu:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -83,11 +92,15 @@ jobs:
         run: cargo bench --verbose --bench relu
 
   bench_accum_dot:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -96,11 +109,15 @@ jobs:
         run: cargo bench --verbose --bench accum_dot
 
   bench_accum_conv:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -109,11 +126,15 @@ jobs:
         run: cargo bench --verbose --bench accum_conv
 
   bench_accum_sumpool:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -122,11 +143,15 @@ jobs:
         run: cargo bench --verbose --bench accum_sumpool
 
   bench_pairwise_add:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -135,11 +160,15 @@ jobs:
         run: cargo bench --verbose --bench pairwise_add
 
   bench_accum_sum:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true
@@ -148,11 +177,15 @@ jobs:
         run: cargo bench --verbose --bench accum_sum
 
   bench_pairwise_pow:
+    permissions:
+      contents: read
     runs-on: self-hosted
     needs: [bench_poseidon]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  #v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions-rs/toolchain@b2417cde72dcf67f306c0ae8e0828a81bf0b189f  #v1.0.6
         with:
           toolchain: nightly-2023-06-27
           override: true

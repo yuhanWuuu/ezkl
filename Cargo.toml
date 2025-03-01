@@ -3,7 +3,7 @@ cargo-features = ["profile-rustflags"]
 [package]
 name = "ezkl"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 default-run = "ezkl"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -16,11 +16,13 @@ crate-type = ["cdylib", "rlib", "staticlib"]
 
 
 [dependencies]
-halo2_gadgets = { git = "https://github.com/zkonduit/halo2", branch = "ac/optional-selector-poly" }
+halo2_gadgets = { git = "https://github.com/zkonduit/halo2" }
 halo2curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", rev = "b753a832e92d5c86c5c997327a9cf9de86a18851", features = [
     "derive_serde",
 ] }
-halo2_proofs = { git = "https://github.com/zkonduit/halo2", package = "halo2_proofs", branch = "ac/cache-lookup-commitments", features = ["circuit-params"] }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2", package = "halo2_proofs", features = [
+    "circuit-params",
+] }
 rand = { version = "0.8", default-features = false }
 itertools = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.3", features = ["derive"], optional = true }
@@ -33,20 +35,16 @@ halo2_wrong_ecc = { git = "https://github.com/zkonduit/halo2wrong", branch = "ac
 snark-verifier = { git = "https://github.com/zkonduit/snark-verifier", branch = "ac/chunked-mv-lookup", features = [
     "derive_serde",
 ] }
-halo2_solidity_verifier = { git = "https://github.com/alexander-camuto/halo2-solidity-verifier", branch = "ac/update-h2-curves", optional = true }
+halo2_solidity_verifier = { git = "https://github.com/alexander-camuto/halo2-solidity-verifier", optional = true }
 maybe-rayon = { version = "0.1.1", default-features = false }
 bincode = { version = "1.3.3", default-features = false }
 unzip-n = "0.1.2"
 num = "0.4.1"
-portable-atomic = { version = "1.6.0", optional = true }
 tosubcommand = { git = "https://github.com/zkonduit/enum_to_subcommand", package = "tosubcommand", optional = true }
 semver = { version = "1.0.22", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-serde_json = { version = "1.0.97", features = [
-    "float_roundtrip",
-    "raw_value",
-] }
+serde_json = { version = "1.0.97", features = ["float_roundtrip", "raw_value"] }
 
 # evm related deps
 alloy = { git = "https://github.com/alloy-rs/alloy", version = "0.1.0", rev = "5fbf57bac99edef9d8475190109a7ea9fb7e5e83", features = [
@@ -56,29 +54,44 @@ alloy = { git = "https://github.com/alloy-rs/alloy", version = "0.1.0", rev = "5
     "rpc-types-eth",
     "signer-wallet",
     "node-bindings",
-    
+
 ], optional = true }
-foundry-compilers = { version = "0.4.1", features = ["svm-solc"], optional = true }
+foundry-compilers = { version = "0.4.1", features = [
+    "svm-solc",
+], optional = true }
 ethabi = { version = "18", optional = true }
 indicatif = { version = "0.17.5", features = ["rayon"], optional = true }
 gag = { version = "1.0.0", default-features = false, optional = true }
 instant = { version = "0.1" }
-reqwest = { version = "0.12.4", default-features = false, features = ["default-tls", "multipart", "stream"], optional = true }
+reqwest = { version = "0.12.4", default-features = false, features = [
+    "default-tls",
+    "multipart",
+    "stream",
+], optional = true }
 openssl = { version = "0.10.55", features = ["vendored"], optional = true }
 tokio-postgres = { version = "0.7.10", optional = true }
 pg_bigdecimal = { version = "0.1.5", optional = true }
 lazy_static = { version = "1.4.0", optional = true }
 colored_json = { version = "3.0.1", default-features = false, optional = true }
-regex = { version = "1", default-features = false, optional = true }
-tokio = { version = "1.35.0", default-features = false, features = ["macros", "rt-multi-thread"], optional = true }
-pyo3 = { version = "0.21.2", features = ["extension-module", "abi3-py37", "macros"], default-features = false, optional = true }
-pyo3-asyncio = { git = "https://github.com/jopemachine/pyo3-asyncio/", branch="migration-pyo3-0.21", features = ["attributes", "tokio-runtime"], default-features = false, optional = true }
-pyo3-log = { version = "0.10.0", default-features = false, optional = true }
-tract-onnx = { git = "https://github.com/sonos/tract/", rev = "40c64319291184814d9fea5fdf4fa16f5a4f7116", default-features = false, optional = true }
+tokio = { version = "1.35.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+], optional = true }
+pyo3 = { version = "0.23.2", features = [
+    "extension-module",
+    "abi3-py37",
+    "macros",
+], default-features = false, optional = true }
+pyo3-async-runtimes = { git = "https://github.com/PyO3/pyo3-async-runtimes", version = "0.23.0", features = [
+    "attributes",
+    "tokio-runtime",
+], default-features = false, optional = true }
+pyo3-log = { version = "0.12.0", default-features = false, optional = true }
+tract-onnx = { git = "https://github.com/sonos/tract/", rev = "37132e0397d0a73e5bd3a8615d932dabe44f6736", default-features = false, optional = true }
 tabled = { version = "0.12.0", optional = true }
-metal = { git = "https://github.com/gfx-rs/metal-rs", optional = true }
 objc = { version = "0.2.4", optional = true }
 mimalloc = { version = "0.1", optional = true }
+pyo3-stub-gen = { version = "0.6.0", optional = true }
 
 # universal bindings
 uniffi = { version = "=0.28.0", optional = true }
@@ -130,6 +143,10 @@ shellexpand = "3.1.0"
 [target.wasm32-unknown-unknown]
 runner = 'wasm-bindgen-test-runner'
 
+
+[[bench]]
+name = "zero_finder"
+harness = false
 
 [[bench]]
 name = "accum_dot"
@@ -195,11 +212,21 @@ required-features = ["ezkl"]
 name = "ios_gen_bindings"
 required-features = ["ios-bindings", "uuid", "camino", "uniffi_bindgen"]
 
+[[bin]]
+name = "py_stub_gen"
+required-features = ["python-bindings"]
+
 [features]
 web = ["wasm-bindgen-rayon"]
-default = ["ezkl", "mv-lookup", "precompute-coset", "no-banner", "parallel-poly-read"]
+default = [
+    "ezkl",
+    "mv-lookup",
+    "precompute-coset",
+    "no-banner",
+    "parallel-poly-read",
+]
 onnx = ["dep:tract-onnx"]
-python-bindings = ["pyo3", "pyo3-log", "pyo3-asyncio"]
+python-bindings = ["pyo3", "pyo3-log", "pyo3-async-runtimes", "pyo3-stub-gen"]
 ios-bindings = ["mv-lookup", "precompute-coset", "parallel-poly-read", "uniffi"]
 ios-bindings-test = ["ios-bindings", "uniffi/bindgen-tests"]
 ezkl = [
@@ -215,23 +242,24 @@ ezkl = [
     "dep:indicatif",
     "dep:gag",
     "dep:reqwest",
-    "dep:openssl",
     "dep:tokio-postgres",
     "dep:pg_bigdecimal",
     "dep:lazy_static",
-    "dep:regex",
     "dep:tokio",
+    "dep:openssl",
     "dep:mimalloc",
     "dep:chrono",
     "dep:sha256",
-    "dep:portable-atomic",
     "dep:clap_complete",
     "dep:halo2_solidity_verifier",
     "dep:semver",
     "dep:clap",
     "dep:tosubcommand",
 ]
-parallel-poly-read = ["halo2_proofs/circuit-params", "halo2_proofs/parallel-poly-read"]
+parallel-poly-read = [
+    "halo2_proofs/circuit-params",
+    "halo2_proofs/parallel-poly-read",
+]
 mv-lookup = [
     "halo2_proofs/mv-lookup",
     "snark-verifier/mv-lookup",
@@ -244,13 +272,15 @@ icicle = ["halo2_proofs/icicle_gpu"]
 empty-cmd = []
 no-banner = []
 no-update = []
-
-# icicle patch to 0.1.0 if feature icicle is enabled
-[patch.'https://github.com/ingonyama-zk/icicle']
-icicle = { git = "https://github.com/ingonyama-zk/icicle?rev=45b00fb", package = "icicle", branch = "fix/vhnat/ezkl-build-fix" }
+macos-metal = ["halo2_proofs/macos"]
+ios-metal = ["halo2_proofs/ios"]
 
 [patch.'https://github.com/zkonduit/halo2']
-halo2_proofs = { git = "https://github.com/zkonduit/halo2?branch=ac/cache-lookup-commitments#8b13a0d2a7a34d8daab010dadb2c47dfa47d37d0", package = "halo2_proofs", branch = "ac/cache-lookup-commitments" }
+halo2_proofs = { git = "https://github.com/zkonduit/halo2#f441c920be45f8f05d2c06a173d82e8885a5ed4d", package = "halo2_proofs" }
+
+[patch.'https://github.com/zkonduit/halo2#0654e92bdf725fd44d849bfef3643870a8c7d50b']
+halo2_proofs = { git = "https://github.com/zkonduit/halo2#f441c920be45f8f05d2c06a173d82e8885a5ed4d", package = "halo2_proofs" }
+
 
 [patch.crates-io]
 uniffi_testing = { git = "https://github.com/ElusAegis/uniffi-rs", branch = "feat/testing-feature-build-fix" }
@@ -259,5 +289,16 @@ uniffi_testing = { git = "https://github.com/ElusAegis/uniffi-rs", branch = "fea
 rustflags = ["-C", "relocation-model=pic"]
 lto = "fat"
 codegen-units = 1
-# panic = "abort"
+#panic = "abort"
 
+
+[profile.test-runs]
+inherits = "dev"
+opt-level = 3
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+    "-O4",
+    "--flexible-inline-max-function-size",
+    "4294967295",
+]

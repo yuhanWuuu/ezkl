@@ -1,7 +1,11 @@
 // ignore file if compiling for wasm
+
+#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
+use mimalloc::MiMalloc;
+
 #[global_allocator]
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: MiMalloc = MiMalloc;
 
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
 use clap::{CommandFactory, Parser};
@@ -24,6 +28,8 @@ use std::env;
 #[tokio::main(flavor = "current_thread")]
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
 pub async fn main() {
+    use log::debug;
+
     let args = Cli::parse();
 
     if let Some(generator) = args.generator {
@@ -38,7 +44,7 @@ pub async fn main() {
         } else {
             info!("Running with CPU");
         }
-        info!(
+        debug!(
             "command: \n {}",
             &command.as_json().to_colored_json_auto().unwrap()
         );

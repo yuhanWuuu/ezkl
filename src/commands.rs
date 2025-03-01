@@ -1,19 +1,14 @@
 use alloy::primitives::Address as H160;
 use clap::{Command, Parser, Subcommand};
-use clap_complete::{generate, Generator, Shell};
+use clap_complete::{Generator, Shell, generate};
 #[cfg(feature = "python-bindings")]
-use pyo3::{
-    conversion::{FromPyObject, PyTryFrom},
-    exceptions::PyValueError,
-    prelude::*,
-    types::PyString,
-};
+use pyo3::{conversion::FromPyObject, exceptions::PyValueError, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use tosubcommand::{ToFlags, ToSubcommand};
 
-use crate::{pfsys::ProofType, Commitments, RunArgs};
+use crate::{Commitments, RunArgs, pfsys::ProofType};
 
 use crate::circuit::CheckMode;
 use crate::graph::TestDataSource;
@@ -88,13 +83,15 @@ pub const DEFAULT_VK_SOL: &str = "vk.sol";
 /// Default VK abi path
 pub const DEFAULT_VK_ABI: &str = "vk.abi";
 /// Default scale rebase multipliers for calibration
-pub const DEFAULT_SCALE_REBASE_MULTIPLIERS: &str = "1,2,10";
+pub const DEFAULT_SCALE_REBASE_MULTIPLIERS: &str = "1,10";
 /// Default use reduced srs for verification
 pub const DEFAULT_USE_REDUCED_SRS_FOR_VERIFICATION: &str = "false";
 /// Default only check for range check rebase
 pub const DEFAULT_ONLY_RANGE_CHECK_REBASE: &str = "false";
 /// Default commitment
 pub const DEFAULT_COMMITMENT: &str = "kzg";
+/// Default seed used to generate random data
+pub const DEFAULT_SEED: &str = "21242";
 
 #[cfg(feature = "python-bindings")]
 /// Converts TranscriptType into a PyObject (Required for TranscriptType to be compatible with Python)
@@ -109,8 +106,8 @@ impl IntoPy<PyObject> for TranscriptType {
 #[cfg(feature = "python-bindings")]
 /// Obtains TranscriptType from PyObject (Required for TranscriptType to be compatible with Python)
 impl<'source> FromPyObject<'source> for TranscriptType {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let trystr = <PyString as PyTryFrom>::try_from(ob)?;
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> PyResult<Self> {
+        let trystr = String::extract_bound(ob)?;
         let strval = trystr.to_string();
         match strval.to_lowercase().as_str() {
             "poseidon" => Ok(TranscriptType::Poseidon),
@@ -196,9 +193,7 @@ pub enum ContractType {
 
 impl Default for ContractType {
     fn default() -> Self {
-        ContractType::Verifier {
-            reusable: false,
-        }
+        ContractType::Verifier { reusable: false }
     }
 }
 
@@ -210,10 +205,8 @@ impl std::fmt::Display for ContractType {
             match self {
                 ContractType::Verifier { reusable: true } => {
                     "verifier/reusable".to_string()
-                },
-                ContractType::Verifier {
-                    reusable: false,
-                } => "verifier".to_string(),
+                }
+                ContractType::Verifier { reusable: false } => "verifier".to_string(),
                 ContractType::VerifyingKeyArtifact => "vka".to_string(),
             }
         )
@@ -240,7 +233,6 @@ impl From<&str> for ContractType {
         }
     }
 }
-
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 /// wrapper for H160 to make it easy to parse into flag vals
@@ -287,9 +279,8 @@ impl IntoPy<PyObject> for CalibrationTarget {
 #[cfg(feature = "python-bindings")]
 /// Obtains CalibrationTarget from PyObject (Required for CalibrationTarget to be compatible with Python)
 impl<'source> FromPyObject<'source> for CalibrationTarget {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let trystr = <PyString as PyTryFrom>::try_from(ob)?;
-        let strval = trystr.to_string();
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> PyResult<Self> {
+        let strval = String::extract_bound(ob)?;
         match strval.to_lowercase().as_str() {
             "resources" => Ok(CalibrationTarget::Resources {
                 col_overflow: false,
@@ -306,12 +297,8 @@ impl<'source> FromPyObject<'source> for CalibrationTarget {
 impl IntoPy<PyObject> for ContractType {
     fn into_py(self, py: Python) -> PyObject {
         match self {
-            ContractType::Verifier { reusable: true } => {
-                "verifier/reusable".to_object(py)
-            }
-            ContractType::Verifier {
-                reusable: false,
-            } => "verifier".to_object(py),
+            ContractType::Verifier { reusable: true } => "verifier/reusable".to_object(py),
+            ContractType::Verifier { reusable: false } => "verifier".to_object(py),
             ContractType::VerifyingKeyArtifact => "vka".to_object(py),
         }
     }
@@ -320,13 +307,10 @@ impl IntoPy<PyObject> for ContractType {
 #[cfg(feature = "python-bindings")]
 /// Obtains ContractType from PyObject (Required for ContractType to be compatible with Python)
 impl<'source> FromPyObject<'source> for ContractType {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let trystr = <PyString as PyTryFrom>::try_from(ob)?;
-        let strval = trystr.to_string();
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> PyResult<Self> {
+        let strval = String::extract_bound(ob)?;
         match strval.to_lowercase().as_str() {
-            "verifier" => Ok(ContractType::Verifier {
-                reusable: false,
-            }),
+            "verifier" => Ok(ContractType::Verifier { reusable: false }),
             "verifier/reusable" => Ok(ContractType::Verifier { reusable: true }),
             "vka" => Ok(ContractType::VerifyingKeyArtifact),
             _ => Err(PyValueError::new_err("Invalid value for ContractType")),
@@ -341,44 +325,49 @@ pub fn get_styles() -> clap::builder::Styles {
             clap::builder::styling::Style::new()
                 .bold()
                 .underline()
-                .fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Cyan))),
+                .fg_color(Some(clap::builder::styling::Color::Ansi(
+                    clap::builder::styling::AnsiColor::Cyan,
+                ))),
         )
         .header(
             clap::builder::styling::Style::new()
                 .bold()
                 .underline()
-                .fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Cyan))),
+                .fg_color(Some(clap::builder::styling::Color::Ansi(
+                    clap::builder::styling::AnsiColor::Cyan,
+                ))),
         )
-        .literal(
-            clap::builder::styling::Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Magenta))),
-        )
-        .invalid(
-            clap::builder::styling::Style::new()
-                .bold()
-                .fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Red))),
-        )
-        .error(
-            clap::builder::styling::Style::new()
-                .bold()
-                .fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Red))),
-        )
+        .literal(clap::builder::styling::Style::new().fg_color(Some(
+            clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Magenta),
+        )))
+        .invalid(clap::builder::styling::Style::new().bold().fg_color(Some(
+            clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Red),
+        )))
+        .error(clap::builder::styling::Style::new().bold().fg_color(Some(
+            clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Red),
+        )))
         .valid(
             clap::builder::styling::Style::new()
                 .bold()
                 .underline()
-                .fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::Green))),
+                .fg_color(Some(clap::builder::styling::Color::Ansi(
+                    clap::builder::styling::AnsiColor::Green,
+                ))),
         )
-        .placeholder(
-            clap::builder::styling::Style::new().fg_color(Some(clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::White))),
-        )
+        .placeholder(clap::builder::styling::Style::new().fg_color(Some(
+            clap::builder::styling::Color::Ansi(clap::builder::styling::AnsiColor::White),
+        )))
 }
-
 
 /// Print completions for the given generator
-pub fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {
-    generate(gen, cmd, cmd.get_name().to_string(), &mut std::io::stdout());
+pub fn print_completions<G: Generator>(r#gen: G, cmd: &mut Command) {
+    generate(
+        r#gen,
+        cmd,
+        cmd.get_name().to_string(),
+        &mut std::io::stdout(),
+    );
 }
-
 
 #[allow(missing_docs)]
 #[derive(Parser, Debug, Clone)]
@@ -392,7 +381,6 @@ pub struct Cli {
     #[allow(missing_docs)]
     pub command: Option<Commands>,
 }
-
 
 #[allow(missing_docs)]
 #[derive(Debug, Subcommand, Clone, Deserialize, Serialize, PartialEq, PartialOrd, ToSubcommand)]
@@ -413,8 +401,9 @@ pub enum Commands {
     /// Generates the witness from an input file.
     GenWitness {
         /// The path to the .json data file
+        /// You can also pass the input data as a string, eg. --data '{"input_data": [1.0,2.0,3.0]}' directly and skip the file
         #[arg(short = 'D', long, default_value = DEFAULT_DATA, value_hint = clap::ValueHint::FilePath)]
-        data: Option<PathBuf>,
+        data: Option<String>,
         /// The path to the compiled model file (generated using the compile-circuit command)
         #[arg(short = 'M', long, default_value = DEFAULT_COMPILED_CIRCUIT, value_hint = clap::ValueHint::FilePath)]
         compiled_circuit: Option<PathBuf>,
@@ -441,12 +430,27 @@ pub enum Commands {
         #[clap(flatten)]
         args: RunArgs,
     },
-
-    /// Calibrates the proving scale, lookup bits and logrows from a circuit settings file.
-        CalibrateSettings {
-        /// The path to the .json calibration data file.
-        #[arg(short = 'D', long, default_value = DEFAULT_CALIBRATION_FILE, value_hint = clap::ValueHint::FilePath)]
+    /// Generate random data for a model
+    GenRandomData {
+        /// The path to the .onnx model file
+        #[arg(short = 'M', long, default_value = DEFAULT_MODEL, value_hint = clap::ValueHint::FilePath)]
+        model: Option<PathBuf>,
+        /// The path to the .json data file to output
+        #[arg(short = 'D', long, default_value = DEFAULT_DATA, value_hint = clap::ValueHint::FilePath)]
         data: Option<PathBuf>,
+        /// Hand-written parser for graph variables, eg. batch_size=1
+        #[cfg_attr(all(feature = "ezkl", not(target_arch = "wasm32")), arg(short = 'V', long, value_parser = crate::parse_key_val::<String, usize>, default_value = "batch_size->1", value_delimiter = ',', value_hint = clap::ValueHint::Other))]
+        variables: Vec<(String, usize)>,
+        /// random seed for reproducibility (optional)
+        #[arg(long, value_hint = clap::ValueHint::Other, default_value = DEFAULT_SEED)]
+        seed: u64,
+    },
+    /// Calibrates the proving scale, lookup bits and logrows from a circuit settings file.
+    CalibrateSettings {
+        /// The path to the .json calibration data file.
+        /// You can also pass the input data as a string, eg. --data '{"input_data": [1.0,2.0,3.0]}' directly and skip the file
+        #[arg(short = 'D', long, default_value = DEFAULT_CALIBRATION_FILE, value_hint = clap::ValueHint::FilePath)]
+        data: Option<String>,
         /// The path to the .onnx model file
         #[arg(short = 'M', long, default_value = DEFAULT_MODEL, value_hint = clap::ValueHint::FilePath)]
         model: Option<PathBuf>,
@@ -490,7 +494,7 @@ pub enum Commands {
         commitment: Option<Commitments>,
     },
 
-        /// Gets an SRS from a circuit settings file.
+    /// Gets an SRS from a circuit settings file.
     #[command(name = "get-srs")]
     GetSrs {
         /// The path to output the desired srs file, if set to None will save to ~/.ezkl/srs
@@ -575,7 +579,7 @@ pub enum Commands {
             require_equals = true,
             num_args = 0..=1,
             default_value_t = TranscriptType::default(),
-            value_enum, 
+            value_enum,
             value_hint = clap::ValueHint::Other
         )]
         transcript: TranscriptType,
@@ -625,12 +629,13 @@ pub enum Commands {
         #[arg(long, default_value = DEFAULT_DISABLE_SELECTOR_COMPRESSION, action = clap::ArgAction::SetTrue)]
         disable_selector_compression: Option<bool>,
     },
-        /// Deploys a test contact that the data attester reads from and creates a data attestation formatted input.json file that contains call data information
+    /// Deploys a test contact that the data attester reads from and creates a data attestation formatted input.json file that contains call data information
     #[command(arg_required_else_help = true)]
     SetupTestEvmData {
         /// The path to the .json data file, which should include both the network input (possibly private) and the network output (public input to the proof)
+        /// You can also pass the input data as a string, eg. --data '{"input_data": [1.0,2.0,3.0]}' directly and skip the file
         #[arg(short = 'D', long, value_hint = clap::ValueHint::FilePath)]
-        data: Option<PathBuf>,
+        data: Option<String>,
         /// The path to the compiled model file (generated using the compile-circuit command)
         #[arg(short = 'M', long, value_hint = clap::ValueHint::FilePath)]
         compiled_circuit: Option<PathBuf>,
@@ -649,20 +654,21 @@ pub enum Commands {
         #[arg(long, default_value = "on-chain", value_hint = clap::ValueHint::Other)]
         output_source: TestDataSource,
     },
-        /// The Data Attestation Verifier contract stores the account calls to fetch data to feed into ezkl. This call data can be updated by an admin account. This tests that admin account is able to update this call data.
+    /// The Data Attestation Verifier contract stores the account calls to fetch data to feed into ezkl. This call data can be updated by an admin account. This tests that admin account is able to update this call data.
     #[command(arg_required_else_help = true)]
     TestUpdateAccountCalls {
         /// The path to the verifier contract's address
         #[arg(long, value_hint = clap::ValueHint::Other)]
         addr: H160Flag,
         /// The path to the .json data file.
+        /// You can also pass the input data as a string, eg. --data '{"input_data": [1.0,2.0,3.0]}' directly and skip the file
         #[arg(short = 'D', long, value_hint = clap::ValueHint::FilePath)]
-        data: Option<PathBuf>,
+        data: Option<String>,
         /// RPC URL for an Ethereum node, if None will use Anvil but WON'T persist state
         #[arg(short = 'U', long, value_hint = clap::ValueHint::Url)]
         rpc_url: Option<String>,
     },
-        /// Swaps the positions in the transcript that correspond to commitments
+    /// Swaps the positions in the transcript that correspond to commitments
     SwapProofCommitments {
         /// The path to the proof file
         #[arg(short = 'P', long, default_value = DEFAULT_PROOF, value_hint = clap::ValueHint::FilePath)]
@@ -672,7 +678,7 @@ pub enum Commands {
         witness_path: Option<PathBuf>,
     },
 
-        /// Loads model, data, and creates proof
+    /// Loads model, data, and creates proof
     Prove {
         /// The path to the .json witness file (generated using the gen-witness command)
         #[arg(short = 'W', long, default_value = DEFAULT_WITNESS, value_hint = clap::ValueHint::FilePath)]
@@ -694,7 +700,7 @@ pub enum Commands {
             require_equals = true,
             num_args = 0..=1,
             default_value_t = ProofType::Single,
-            value_enum, 
+            value_enum,
             value_hint = clap::ValueHint::Other
         )]
         proof_type: ProofType,
@@ -702,7 +708,7 @@ pub enum Commands {
         #[arg(long, default_value = DEFAULT_CHECKMODE, value_hint = clap::ValueHint::Other)]
         check_mode: Option<CheckMode>,
     },
-        /// Encodes a proof into evm calldata
+    /// Encodes a proof into evm calldata
     #[command(name = "encode-evm-calldata")]
     EncodeEvmCalldata {
         /// The path to the proof file (generated using the prove command)
@@ -715,7 +721,7 @@ pub enum Commands {
         #[arg(long, value_hint = clap::ValueHint::Other)]
         addr_vk: Option<H160Flag>,
     },
-        /// Creates an Evm verifier for a single proof
+    /// Creates an Evm verifier for a single proof
     #[command(name = "create-evm-verifier")]
     CreateEvmVerifier {
         /// The path to SRS, if None will use ~/.ezkl/srs/kzg{logrows}.srs
@@ -737,7 +743,7 @@ pub enum Commands {
         #[arg(long, default_value = DEFAULT_RENDER_REUSABLE, action = clap::ArgAction::SetTrue)]
         reusable: Option<bool>,
     },
-        /// Creates an Evm verifier artifact for a single proof to be used by the reusable verifier
+    /// Creates an Evm verifier artifact for a single proof to be used by the reusable verifier
     #[command(name = "create-evm-vka")]
     CreateEvmVKArtifact {
         /// The path to SRS, if None will use ~/.ezkl/srs/kzg{logrows}.srs
@@ -756,7 +762,7 @@ pub enum Commands {
         #[arg(long, default_value = DEFAULT_VK_ABI, value_hint = clap::ValueHint::FilePath)]
         abi_path: Option<PathBuf>,
     },
-        /// Creates an Evm verifier that attests to on-chain inputs for a single proof
+    /// Creates an Evm verifier that attests to on-chain inputs for a single proof
     #[command(name = "create-evm-da")]
     CreateEvmDataAttestation {
         /// The path to load circuit settings .json file from (generated using the gen-settings command)
@@ -774,13 +780,13 @@ pub enum Commands {
         /// view functions that return the data that the network
         /// ingests as inputs.
         #[arg(short = 'D', long, default_value = DEFAULT_DATA, value_hint = clap::ValueHint::FilePath)]
-        data: Option<PathBuf>,
+        data: Option<String>,
         /// The path to the witness file. This is needed for proof swapping for kzg commitments.
         #[arg(short = 'W', long, default_value = DEFAULT_WITNESS, value_hint = clap::ValueHint::FilePath)]
         witness: Option<PathBuf>,
     },
 
-        /// Creates an Evm verifier for an aggregate proof
+    /// Creates an Evm verifier for an aggregate proof
     #[command(name = "create-evm-verifier-aggr")]
     CreateEvmVerifierAggr {
         /// The path to SRS, if None will use ~/.ezkl/srs/kzg{logrows}.srs
@@ -844,7 +850,7 @@ pub enum Commands {
         #[arg(long, default_value = DEFAULT_COMMITMENT, value_hint = clap::ValueHint::Other)]
         commitment: Option<Commitments>,
     },
-        /// Deploys an evm contract (verifier, reusable verifier, or vk artifact) that is generated by ezkl
+    /// Deploys an evm contract (verifier, reusable verifier, or vk artifact) that is generated by ezkl
     DeployEvm {
         /// The path to the Solidity code (generated using the create-evm-verifier command)
         #[arg(long, default_value = DEFAULT_SOL_CODE, value_hint = clap::ValueHint::FilePath)]
@@ -865,12 +871,13 @@ pub enum Commands {
         #[arg(long = "contract-type", short = 'C', default_value = DEFAULT_CONTRACT_DEPLOYMENT_TYPE, value_hint = clap::ValueHint::Other)]
         contract: ContractType,
     },
-        /// Deploys an evm verifier that allows for data attestation
+    /// Deploys an evm verifier that allows for data attestation
     #[command(name = "deploy-evm-da")]
     DeployEvmDataAttestation {
         /// The path to the .json data file, which should include both the network input (possibly private) and the network output (public input to the proof)
+        /// You can also pass the input data as a string, eg. --data '{"input_data": [1.0,2.0,3.0]}' directly and skip the file
         #[arg(short = 'D', long, default_value = DEFAULT_DATA, value_hint = clap::ValueHint::FilePath)]
-        data: Option<PathBuf>,
+        data: Option<String>,
         /// The path to load circuit settings .json file from (generated using the gen-settings command)
         #[arg(long, default_value = DEFAULT_SETTINGS, value_hint = clap::ValueHint::FilePath)]
         settings_path: Option<PathBuf>,
@@ -890,7 +897,7 @@ pub enum Commands {
         #[arg(short = 'P', long, value_hint = clap::ValueHint::Other)]
         private_key: Option<String>,
     },
-        /// Verifies a proof using a local Evm executor, returning accept or reject
+    /// Verifies a proof using a local Evm executor, returning accept or reject
     #[command(name = "verify-evm")]
     VerifyEvm {
         /// The path to the proof file (generated using the prove command)
@@ -917,7 +924,6 @@ pub enum Commands {
         version: Option<String>,
     },
 }
-
 
 impl Commands {
     /// Converts the commands to a json string

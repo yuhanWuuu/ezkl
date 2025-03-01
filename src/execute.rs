@@ -1,29 +1,33 @@
-use crate::circuit::region::RegionSettings;
+use crate::EZKL_BUF_CAPACITY;
 use crate::circuit::CheckMode;
+use crate::circuit::region::RegionSettings;
 use crate::commands::CalibrationTarget;
-use crate::eth::{deploy_contract_via_solidity, deploy_da_verifier_via_solidity};
+use crate::eth::{
+    deploy_contract_via_solidity, deploy_da_verifier_via_solidity, fix_da_multi_sol,
+    fix_da_single_sol,
+};
 #[allow(unused_imports)]
-use crate::eth::{fix_da_sol, get_contract_artifacts, verify_proof_via_solidity};
-use crate::graph::input::GraphData;
+use crate::eth::{get_contract_artifacts, verify_proof_via_solidity};
+use crate::graph::input::{Calls, GraphData};
 use crate::graph::{GraphCircuit, GraphSettings, GraphWitness, Model};
 use crate::graph::{TestDataSource, TestSources};
 use crate::pfsys::evm::aggregation_kzg::{AggregationCircuit, PoseidonTranscript};
 use crate::pfsys::{
-    create_keys, load_pk, load_vk, save_params, save_pk, Snark, StrategyType, TranscriptType,
+    ProofSplitCommit, create_proof_circuit, swap_proof_commitments_polycommit, verify_proof_circuit,
 };
 use crate::pfsys::{
-    create_proof_circuit, swap_proof_commitments_polycommit, verify_proof_circuit, ProofSplitCommit,
+    Snark, StrategyType, TranscriptType, create_keys, load_pk, load_vk, save_params, save_pk,
 };
 use crate::pfsys::{save_vk, srs::*};
 use crate::tensor::TensorError;
-use crate::EZKL_BUF_CAPACITY;
-use crate::{commands::*, EZKLError};
 use crate::{Commitments, RunArgs};
+use crate::{EZKLError, commands::*};
 use colored::Colorize;
 #[cfg(unix)]
 use gag::Gag;
 use halo2_proofs::dev::VerifyFailure;
 use halo2_proofs::plonk::{self, Circuit};
+use halo2_proofs::poly::VerificationStrategy;
 use halo2_proofs::poly::commitment::{CommitmentScheme, Params};
 use halo2_proofs::poly::commitment::{ParamsProver, Verifier};
 use halo2_proofs::poly::ipa::commitment::{IPACommitmentScheme, ParamsIPA};
@@ -36,7 +40,6 @@ use halo2_proofs::poly::kzg::strategy::AccumulatorStrategy as KZGAccumulatorStra
 use halo2_proofs::poly::kzg::{
     commitment::ParamsKZG, strategy::SingleStrategy as KZGSingleStrategy,
 };
-use halo2_proofs::poly::VerificationStrategy;
 use halo2_proofs::transcript::{EncodedChallenge, TranscriptReadBuffer};
 use halo2_solidity_verifier;
 use halo2curves::bn256::{Bn256, Fr, G1Affine};
@@ -47,12 +50,12 @@ use instant::Instant;
 use itertools::Itertools;
 use log::debug;
 use log::{info, trace, warn};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use snark_verifier::loader::native::NativeLoader;
+use snark_verifier::system::halo2::Config;
 use snark_verifier::system::halo2::compile;
 use snark_verifier::system::halo2::transcript::evm::EvmTranscript;
-use snark_verifier::system::halo2::Config;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::{Cursor, Write};
@@ -62,6 +65,8 @@ use std::str::FromStr;
 use std::time::Duration;
 use tabled::Tabled;
 use thiserror::Error;
+use tract_onnx::prelude::IntoTensor;
+use tract_onnx::prelude::Tensor as TractTensor;
 
 use lazy_static::lazy_static;
 
@@ -113,7 +118,7 @@ pub async fn run(command: Commands) -> Result<String, EZKLError> {
         } => gen_srs_cmd(
             srs_path,
             logrows as u32,
-            commitment.unwrap_or(Commitments::from_str(DEFAULT_COMMITMENT).unwrap()),
+            commitment.unwrap_or_else(|| Commitments::from_str(DEFAULT_COMMITMENT).unwrap()),
         ),
         Commands::GetSrs {
             srs_path,
@@ -130,6 +135,17 @@ pub async fn run(command: Commands) -> Result<String, EZKLError> {
             model.unwrap_or(DEFAULT_MODEL.into()),
             settings_path.unwrap_or(DEFAULT_SETTINGS.into()),
             args,
+        ),
+        Commands::GenRandomData {
+            model,
+            data,
+            variables,
+            seed,
+        } => gen_random_data(
+            model.unwrap_or(DEFAULT_MODEL.into()),
+            data.unwrap_or(DEFAULT_DATA.into()),
+            variables,
+            seed,
         ),
         Commands::CalibrateSettings {
             model,
@@ -500,7 +516,9 @@ fn update_ezkl_binary(version: &Option<String>) -> Result<String, EZKLError> {
         .status()
         .is_err()
     {
-        log::warn!("bash is not installed on this system, trying to run the install script with sh (may fail)");
+        log::warn!(
+            "bash is not installed on this system, trying to run the install script with sh (may fail)"
+        );
         "sh"
     } else {
         "bash"
@@ -709,7 +727,7 @@ pub(crate) fn table(model: PathBuf, run_args: RunArgs) -> Result<String, EZKLErr
 
 pub(crate) async fn gen_witness(
     compiled_circuit_path: PathBuf,
-    data: PathBuf,
+    data: String,
     output: Option<PathBuf>,
     vk_path: Option<PathBuf>,
     srs_path: Option<PathBuf>,
@@ -717,7 +735,7 @@ pub(crate) async fn gen_witness(
     // these aren't real values so the sanity checks are mostly meaningless
 
     let mut circuit = GraphCircuit::load(compiled_circuit_path)?;
-    let data: GraphData = GraphData::from_path(data)?;
+    let data = GraphData::from_str(&data)?;
     let settings = circuit.settings().clone();
 
     let vk = if let Some(vk) = vk_path {
@@ -822,6 +840,71 @@ pub(crate) fn gen_circuit_settings(
     let circuit = GraphCircuit::from_run_args(&run_args, &model_path)?;
     let params = circuit.settings();
     params.save(&params_output)?;
+    Ok(String::new())
+}
+
+/// Generate a circuit settings file
+pub(crate) fn gen_random_data(
+    model_path: PathBuf,
+    data_path: PathBuf,
+    variables: Vec<(String, usize)>,
+    seed: u64,
+) -> Result<String, EZKLError> {
+    let mut file = std::fs::File::open(&model_path).map_err(|e| {
+        crate::graph::errors::GraphError::ReadWriteFileError(
+            model_path.display().to_string(),
+            e.to_string(),
+        )
+    })?;
+
+    let (tract_model, _symbol_values) = Model::load_onnx_using_tract(&mut file, &variables)?;
+
+    let input_facts = tract_model
+        .input_outlets()
+        .map_err(|e| EZKLError::from(e.to_string()))?
+        .iter()
+        .map(|&i| tract_model.outlet_fact(i))
+        .collect::<tract_onnx::prelude::TractResult<Vec<_>>>()
+        .map_err(|e| EZKLError::from(e.to_string()))?;
+
+    /// Generates a random tensor of a given size and type.
+    fn random(
+        sizes: &[usize],
+        datum_type: tract_onnx::prelude::DatumType,
+        seed: u64,
+    ) -> TractTensor {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+        let mut tensor = TractTensor::zero::<f32>(sizes).unwrap();
+        let slice = tensor.as_slice_mut::<f32>().unwrap();
+        slice.iter_mut().for_each(|x| *x = rng.r#gen());
+        tensor.cast_to_dt(datum_type).unwrap().into_owned()
+    }
+
+    fn tensor_for_fact(fact: &tract_onnx::prelude::TypedFact, seed: u64) -> TractTensor {
+        if let Some(value) = &fact.konst {
+            return value.clone().into_tensor();
+        }
+
+        random(
+            fact.shape
+                .as_concrete()
+                .expect("Expected concrete shape, found: {fact:?}"),
+            fact.datum_type,
+            seed,
+        )
+    }
+
+    let generated = input_facts
+        .iter()
+        .map(|v| tensor_for_fact(v, seed))
+        .collect_vec();
+
+    let data = GraphData::from_tract_data(&generated)?;
+
+    data.save(data_path)?;
+
     Ok(String::new())
 }
 
@@ -963,7 +1046,7 @@ impl AccuracyResults {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn calibrate(
     model_path: PathBuf,
-    data: PathBuf,
+    data: String,
     settings_path: PathBuf,
     target: CalibrationTarget,
     lookup_safety_margin: f64,
@@ -977,7 +1060,7 @@ pub(crate) async fn calibrate(
 
     use crate::fieldutils::IntegerRep;
 
-    let data = GraphData::from_path(data)?;
+    let data = GraphData::from_str(&data)?;
     // load the pre-generated settings
     let settings = GraphSettings::load(&settings_path)?;
     // now retrieve the run args
@@ -1441,7 +1524,7 @@ pub(crate) async fn create_evm_data_attestation(
     settings_path: PathBuf,
     sol_code_path: PathBuf,
     abi_path: PathBuf,
-    input: PathBuf,
+    input: String,
     witness: Option<PathBuf>,
 ) -> Result<String, EZKLError> {
     #[allow(unused_imports)]
@@ -1454,15 +1537,27 @@ pub(crate) async fn create_evm_data_attestation(
     trace!("params computed");
 
     // if input is not provided, we just instantiate dummy input data
-    let data = GraphData::from_path(input).unwrap_or(GraphData::new(DataSource::File(vec![])));
+    let data =
+        GraphData::from_str(&input).unwrap_or_else(|_| GraphData::new(DataSource::File(vec![])));
+
+    // The number of input and output instances we attest to for the single call data attestation
+    let mut input_len = None;
+    let mut output_len = None;
 
     let output_data = if let Some(DataSource::OnChain(source)) = data.output_data {
         if visibility.output.is_private() {
             return Err("private output data on chain is not supported on chain".into());
         }
         let mut on_chain_output_data = vec![];
-        for call in source.calls {
-            on_chain_output_data.push(call);
+        match source.calls {
+            Calls::Multiple(calls) => {
+                for call in calls {
+                    on_chain_output_data.push(call);
+                }
+            }
+            Calls::Single(call) => {
+                output_len = Some(call.len);
+            }
         }
         Some(on_chain_output_data)
     } else {
@@ -1474,8 +1569,15 @@ pub(crate) async fn create_evm_data_attestation(
             return Err("private input data on chain is not supported on chain".into());
         }
         let mut on_chain_input_data = vec![];
-        for call in source.calls {
-            on_chain_input_data.push(call);
+        match source.calls {
+            Calls::Multiple(calls) => {
+                for call in calls {
+                    on_chain_input_data.push(call);
+                }
+            }
+            Calls::Single(call) => {
+                input_len = Some(call.len);
+            }
         }
         Some(on_chain_input_data)
     } else {
@@ -1502,19 +1604,30 @@ pub(crate) async fn create_evm_data_attestation(
         None
     };
 
-    let output = fix_da_sol(input_data, output_data, commitment_bytes)?;
-    let mut f = File::create(sol_code_path.clone())?;
-    let _ = f.write(output.as_bytes());
-    // fetch abi of the contract
-    let (abi, _, _) = get_contract_artifacts(sol_code_path, "DataAttestation", 0).await?;
-    // save abi to file
-    serde_json::to_writer(std::fs::File::create(abi_path)?, &abi)?;
+    // if either input_len or output_len is Some then we are in the single call data attestation mode
+    if input_len.is_some() || output_len.is_some() {
+        let output = fix_da_single_sol(input_len, output_len)?;
+        let mut f = File::create(sol_code_path.clone())?;
+        let _ = f.write(output.as_bytes());
+        // fetch abi of the contract
+        let (abi, _, _) = get_contract_artifacts(sol_code_path, "DataAttestationSingle", 0).await?;
+        // save abi to file
+        serde_json::to_writer(std::fs::File::create(abi_path)?, &abi)?;
+    } else {
+        let output = fix_da_multi_sol(input_data, output_data, commitment_bytes)?;
+        let mut f = File::create(sol_code_path.clone())?;
+        let _ = f.write(output.as_bytes());
+        // fetch abi of the contract
+        let (abi, _, _) = get_contract_artifacts(sol_code_path, "DataAttestationMulti", 0).await?;
+        // save abi to file
+        serde_json::to_writer(std::fs::File::create(abi_path)?, &abi)?;
+    }
 
     Ok(String::new())
 }
 
 pub(crate) async fn deploy_da_evm(
-    data: PathBuf,
+    data: String,
     settings_path: PathBuf,
     sol_code_path: PathBuf,
     rpc_url: Option<String>,
@@ -1757,7 +1870,7 @@ pub(crate) fn setup(
 }
 
 pub(crate) async fn setup_test_evm_witness(
-    data_path: PathBuf,
+    data_path: String,
     compiled_circuit_path: PathBuf,
     test_data: PathBuf,
     rpc_url: Option<String>,
@@ -1766,7 +1879,7 @@ pub(crate) async fn setup_test_evm_witness(
 ) -> Result<String, EZKLError> {
     use crate::graph::TestOnChainData;
 
-    let mut data = GraphData::from_path(data_path)?;
+    let mut data = GraphData::from_str(&data_path)?;
     let mut circuit = GraphCircuit::load(compiled_circuit_path)?;
 
     // if both input and output are from files fail
@@ -1794,7 +1907,7 @@ pub(crate) async fn setup_test_evm_witness(
 use crate::pfsys::ProofType;
 pub(crate) async fn test_update_account_calls(
     addr: H160Flag,
-    data: PathBuf,
+    data: String,
     rpc_url: Option<String>,
 ) -> Result<String, EZKLError> {
     use crate::eth::update_account_calls;
@@ -2016,6 +2129,7 @@ pub(crate) fn mock_aggregate(
     Ok(String::new())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn setup_aggregate(
     sample_snarks: Vec<PathBuf>,
     vk_path: PathBuf,

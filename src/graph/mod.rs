@@ -60,7 +60,10 @@ use pyo3::prelude::*;
 #[cfg(feature = "python-bindings")]
 use pyo3::types::PyDict;
 #[cfg(feature = "python-bindings")]
+use pyo3::types::PyDictMethods;
+#[cfg(feature = "python-bindings")]
 use pyo3::ToPyObject;
+
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 pub use utilities::*;
@@ -277,7 +280,13 @@ impl GraphWitness {
         })?;
 
         let reader = std::io::BufReader::with_capacity(*EZKL_BUF_CAPACITY, file);
-        serde_json::from_reader(reader).map_err(|e| e.into())
+        let witness: GraphWitness =
+            serde_json::from_reader(reader).map_err(Into::<GraphError>::into)?;
+
+        // check versions match
+        crate::check_version_string_matches(witness.version.as_deref().unwrap_or(""));
+
+        Ok(witness)
     }
 
     /// Save the model input to a file
@@ -343,10 +352,10 @@ impl ToPyObject for GraphWitness {
         if let Some(processed_inputs) = &self.processed_inputs {
             //poseidon_hash
             if let Some(processed_inputs_poseidon_hash) = &processed_inputs.poseidon_hash {
-                insert_poseidon_hash_pydict(dict_inputs, processed_inputs_poseidon_hash).unwrap();
+                insert_poseidon_hash_pydict(&dict_inputs, processed_inputs_poseidon_hash).unwrap();
             }
             if let Some(processed_inputs_polycommit) = &processed_inputs.polycommit {
-                insert_polycommit_pydict(dict_inputs, processed_inputs_polycommit).unwrap();
+                insert_polycommit_pydict(&dict_inputs, processed_inputs_polycommit).unwrap();
             }
 
             dict.set_item("processed_inputs", dict_inputs).unwrap();
@@ -354,10 +363,10 @@ impl ToPyObject for GraphWitness {
 
         if let Some(processed_params) = &self.processed_params {
             if let Some(processed_params_poseidon_hash) = &processed_params.poseidon_hash {
-                insert_poseidon_hash_pydict(dict_params, processed_params_poseidon_hash).unwrap();
+                insert_poseidon_hash_pydict(&dict_params, processed_params_poseidon_hash).unwrap();
             }
             if let Some(processed_params_polycommit) = &processed_params.polycommit {
-                insert_polycommit_pydict(dict_inputs, processed_params_polycommit).unwrap();
+                insert_polycommit_pydict(&dict_params, processed_params_polycommit).unwrap();
             }
 
             dict.set_item("processed_params", dict_params).unwrap();
@@ -365,10 +374,11 @@ impl ToPyObject for GraphWitness {
 
         if let Some(processed_outputs) = &self.processed_outputs {
             if let Some(processed_outputs_poseidon_hash) = &processed_outputs.poseidon_hash {
-                insert_poseidon_hash_pydict(dict_outputs, processed_outputs_poseidon_hash).unwrap();
+                insert_poseidon_hash_pydict(&dict_outputs, processed_outputs_poseidon_hash)
+                    .unwrap();
             }
             if let Some(processed_outputs_polycommit) = &processed_outputs.polycommit {
-                insert_polycommit_pydict(dict_inputs, processed_outputs_polycommit).unwrap();
+                insert_polycommit_pydict(&dict_outputs, processed_outputs_polycommit).unwrap();
             }
 
             dict.set_item("processed_outputs", dict_outputs).unwrap();
@@ -379,7 +389,10 @@ impl ToPyObject for GraphWitness {
 }
 
 #[cfg(feature = "python-bindings")]
-fn insert_poseidon_hash_pydict(pydict: &PyDict, poseidon_hash: &Vec<Fp>) -> Result<(), PyErr> {
+fn insert_poseidon_hash_pydict(
+    pydict: &Bound<'_, PyDict>,
+    poseidon_hash: &Vec<Fp>,
+) -> Result<(), PyErr> {
     let poseidon_hash: Vec<String> = poseidon_hash.iter().map(field_to_string).collect();
     pydict.set_item("poseidon_hash", poseidon_hash)?;
 
@@ -387,7 +400,10 @@ fn insert_poseidon_hash_pydict(pydict: &PyDict, poseidon_hash: &Vec<Fp>) -> Resu
 }
 
 #[cfg(feature = "python-bindings")]
-fn insert_polycommit_pydict(pydict: &PyDict, commits: &Vec<Vec<G1Affine>>) -> Result<(), PyErr> {
+fn insert_polycommit_pydict(
+    pydict: &Bound<'_, PyDict>,
+    commits: &Vec<Vec<G1Affine>>,
+) -> Result<(), PyErr> {
     use crate::bindings::python::PyG1Affine;
     let poseidon_hash: Vec<Vec<PyG1Affine>> = commits
         .iter()
@@ -439,6 +455,10 @@ pub struct GraphSettings {
     pub num_blinding_factors: Option<usize>,
     /// unix time timestamp
     pub timestamp: Option<u128>,
+    /// Model inputs types (if any)
+    pub input_types: Option<Vec<InputType>>,
+    /// Model outputs types (if any)
+    pub output_types: Option<Vec<InputType>>,
 }
 
 impl GraphSettings {
@@ -562,10 +582,14 @@ impl GraphSettings {
         // buf reader
         let reader =
             std::io::BufReader::with_capacity(*EZKL_BUF_CAPACITY, std::fs::File::open(path)?);
-        serde_json::from_reader(reader).map_err(|e| {
+        let settings: GraphSettings = serde_json::from_reader(reader).map_err(|e| {
             error!("failed to load settings file at {}", e);
             std::io::Error::new(std::io::ErrorKind::Other, e)
-        })
+        })?;
+
+        crate::check_version_string_matches(&settings.version);
+
+        Ok(settings)
     }
 
     /// Export the ezkl configuration as json
@@ -597,11 +621,6 @@ impl GraphSettings {
             log::warn!("using default available_col_size");
             base.pow(self.run_args.logrows) as usize - ASSUMED_BLINDING_FACTORS - 1
         }
-    }
-
-    ///
-    pub fn uses_modules(&self) -> bool {
-        !self.module_sizes.max_constraints() > 0
     }
 
     /// if any visibility is encrypted or hashed
@@ -687,6 +706,9 @@ impl GraphCircuit {
         let reader = std::io::BufReader::with_capacity(*EZKL_BUF_CAPACITY, f);
         let result: GraphCircuit = bincode::deserialize_from(reader)?;
 
+        // check the versions matche
+        crate::check_version_string_matches(&result.core.settings.version);
+
         Ok(result)
     }
 }
@@ -743,7 +765,7 @@ pub struct TestOnChainData {
     pub data: std::path::PathBuf,
     /// rpc endpoint
     pub rpc: Option<String>,
-    ///
+    /// data sources for the on chain data
     pub data_sources: TestSources,
 }
 
@@ -931,7 +953,7 @@ impl GraphCircuit {
             DataSource::File(file_data) => {
                 self.load_file_data(file_data, &shapes, scales, input_types)
             }
-            _ => unreachable!("cannot load from on-chain data"),
+            _ => Err(GraphError::OnChainDataSource),
         }
     }
 
@@ -1004,11 +1026,24 @@ impl GraphCircuit {
         shapes: &Vec<Vec<usize>>,
         scales: Vec<crate::Scale>,
     ) -> Result<Vec<Tensor<Fp>>, GraphError> {
-        use crate::eth::{evm_quantize, read_on_chain_inputs, setup_eth_backend};
+        use crate::eth::{
+            evm_quantize_multi, evm_quantize_single, read_on_chain_inputs_multi,
+            read_on_chain_inputs_single, setup_eth_backend,
+        };
         let (client, client_address) = setup_eth_backend(Some(&source.rpc), None).await?;
-        let inputs = read_on_chain_inputs(client.clone(), client_address, &source.calls).await?;
-        // quantize the supplied data using the provided scale + QuantizeData.sol
-        let quantized_evm_inputs = evm_quantize(client, scales, &inputs).await?;
+        let quantized_evm_inputs = match source.calls {
+            input::Calls::Single(call) => {
+                let (inputs, decimals) =
+                    read_on_chain_inputs_single(client.clone(), client_address, call).await?;
+
+                evm_quantize_single(client, scales, &inputs, decimals).await?
+            }
+            input::Calls::Multiple(calls) => {
+                let inputs =
+                    read_on_chain_inputs_multi(client.clone(), client_address, &calls).await?;
+                evm_quantize_multi(client, scales, &inputs).await?
+            }
+        };
         // on-chain data has already been quantized at this point. Just need to reshape it and push into tensor vector
         let mut inputs: Vec<Tensor<Fp>> = vec![];
         for (input, shape) in [quantized_evm_inputs].iter().zip(shapes) {

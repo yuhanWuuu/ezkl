@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    circuit::{layouts, utils, Tolerance},
-    fieldutils::integer_rep_to_felt,
+    circuit::{layouts, utils},
+    fieldutils::{integer_rep_to_felt, IntegerRep},
     graph::multiplier_to_scale,
-    tensor::{self, Tensor, TensorType, ValTensor},
+    tensor::{self, DataFormat, Tensor, TensorType, ValTensor},
 };
 use halo2curves::ff::PrimeField;
 use serde::{Deserialize, Serialize};
@@ -57,11 +57,13 @@ pub enum HybridOp {
         stride: Vec<usize>,
         kernel_shape: Vec<usize>,
         normalized: bool,
+        data_format: DataFormat,
     },
     MaxPool {
         padding: Vec<(usize, usize)>,
         stride: Vec<usize>,
         pool_dims: Vec<usize>,
+        data_format: DataFormat,
     },
     ReduceMin {
         axes: Vec<usize>,
@@ -76,7 +78,9 @@ pub enum HybridOp {
         output_scale: utils::F32,
         axes: Vec<usize>,
     },
-    RangeCheck(Tolerance),
+    Output {
+        decomp: bool,
+    },
     Greater,
     GreaterEqual,
     Less,
@@ -151,10 +155,10 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 padding,
                 stride,
                 kernel_shape,
-                normalized,
+                normalized, data_format
             } => format!(
-                "SUMPOOL (padding={:?}, stride={:?}, kernel_shape={:?}, normalized={})",
-                padding, stride, kernel_shape, normalized
+                "SUMPOOL (padding={:?}, stride={:?}, kernel_shape={:?}, normalized={}, data_format={:?})",
+                padding, stride, kernel_shape, normalized, data_format
             ),
             HybridOp::ReduceMax { axes } => format!("REDUCEMAX (axes={:?})", axes),
             HybridOp::ReduceArgMax { dim } => format!("REDUCEARGMAX (dim={})", dim),
@@ -162,9 +166,10 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 padding,
                 stride,
                 pool_dims,
+                data_format,
             } => format!(
-                "MaxPool (padding={:?}, stride={:?}, pool_dims={:?})",
-                padding, stride, pool_dims
+                "MaxPool (padding={:?}, stride={:?}, pool_dims={:?}, data_format={:?})",
+                padding, stride, pool_dims, data_format
             ),
             HybridOp::ReduceMin { axes } => format!("REDUCEMIN (axes={:?})", axes),
             HybridOp::ReduceArgMin { dim } => format!("REDUCEARGMIN (dim={})", dim),
@@ -178,7 +183,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                     input_scale, output_scale, axes
                 )
             }
-            HybridOp::RangeCheck(p) => format!("RANGECHECK (tol={:?})", p),
+            HybridOp::Output { decomp } => {
+                format!("OUTPUT (decomp={})", decomp)
+            }
             HybridOp::Greater => "GREATER".to_string(),
             HybridOp::GreaterEqual => "GREATEREQUAL".to_string(),
             HybridOp::Less => "LESS".to_string(),
@@ -234,6 +241,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 stride,
                 kernel_shape,
                 normalized,
+                data_format,
             } => layouts::sumpool(
                 config,
                 region,
@@ -242,6 +250,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 stride,
                 kernel_shape,
                 *normalized,
+                *data_format,
             )?,
             HybridOp::Recip {
                 input_scale,
@@ -250,8 +259,8 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 config,
                 region,
                 values[..].try_into()?,
-                integer_rep_to_felt(input_scale.0 as i128),
-                integer_rep_to_felt(output_scale.0 as i128),
+                integer_rep_to_felt(input_scale.0 as IntegerRep),
+                integer_rep_to_felt(output_scale.0 as IntegerRep),
             )?,
             HybridOp::Div { denom, .. } => {
                 if denom.0.fract() == 0.0 {
@@ -259,7 +268,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                         config,
                         region,
                         values[..].try_into()?,
-                        integer_rep_to_felt(denom.0 as i128),
+                        integer_rep_to_felt(denom.0 as IntegerRep),
                     )?
                 } else {
                     layouts::nonlinearity(
@@ -282,6 +291,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 padding,
                 stride,
                 pool_dims,
+                data_format,
             } => layouts::max_pool(
                 config,
                 region,
@@ -289,6 +299,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 padding,
                 stride,
                 pool_dims,
+                *data_format,
             )?,
             HybridOp::ReduceMax { axes } => {
                 layouts::max_axes(config, region, values[..].try_into()?, axes)?
@@ -314,13 +325,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> Op<F> for Hybrid
                 *output_scale,
                 axes,
             )?,
-            HybridOp::RangeCheck(tol) => layouts::range_check_percent(
-                config,
-                region,
-                values[..].try_into()?,
-                tol.scale,
-                tol.val,
-            )?,
+            HybridOp::Output { decomp } => {
+                layouts::output(config, region, values[..].try_into()?, *decomp)?
+            }
             HybridOp::Greater => layouts::greater(config, region, values[..].try_into()?)?,
             HybridOp::GreaterEqual => {
                 layouts::greater_equal(config, region, values[..].try_into()?)?

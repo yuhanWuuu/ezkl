@@ -4,6 +4,7 @@ use crate::{
         utils::{self, F32},
     },
     tensor::{self, Tensor, TensorError},
+    tensor::{DataFormat, KernelFormat},
 };
 
 use super::{base::BaseOp, *};
@@ -43,6 +44,8 @@ pub enum PolyOp {
         padding: Vec<(usize, usize)>,
         stride: Vec<usize>,
         group: usize,
+        data_format: DataFormat,
+        kernel_format: KernelFormat,
     },
     Downsample {
         axis: usize,
@@ -54,6 +57,8 @@ pub enum PolyOp {
         output_padding: Vec<usize>,
         stride: Vec<usize>,
         group: usize,
+        data_format: DataFormat,
+        kernel_format: KernelFormat,
     },
     Add,
     Sub,
@@ -165,10 +170,12 @@ impl<
                 stride,
                 padding,
                 group,
+                data_format,
+                kernel_format,
             } => {
                 format!(
-                    "CONV (stride={:?}, padding={:?}, group={})",
-                    stride, padding, group
+                    "CONV (stride={:?}, padding={:?}, group={}, data_format={:?}, kernel_format={:?})",
+                    stride, padding, group, data_format, kernel_format
                 )
             }
             PolyOp::DeConv {
@@ -176,11 +183,12 @@ impl<
                 padding,
                 output_padding,
                 group,
+                data_format,
+                kernel_format,
             } => {
                 format!(
-                    "DECONV (stride={:?}, padding={:?}, output_padding={:?}, group={})",
-                    stride, padding, output_padding, group
-                )
+                    "DECONV (stride={:?}, padding={:?}, output_padding={:?}, group={}, data_format={:?}, kernel_format={:?})",
+                    stride, padding, output_padding, group, data_format, kernel_format)
             }
             PolyOp::Concat { axis } => format!("CONCAT (axis={})", axis),
             PolyOp::Slice { axis, start, end } => {
@@ -242,6 +250,8 @@ impl<
                 padding,
                 stride,
                 group,
+                data_format,
+                kernel_format,
             } => layouts::conv(
                 config,
                 region,
@@ -249,9 +259,17 @@ impl<
                 padding,
                 stride,
                 *group,
+                *data_format,
+                *kernel_format,
             )?,
             PolyOp::GatherElements { dim, constant_idx } => {
                 if let Some(idx) = constant_idx {
+                    if values.len() != 1 {
+                        return Err(TensorError::DimError(
+                            "GatherElements only accepts single inputs".to_string(),
+                        )
+                        .into());
+                    }
                     tensor::ops::gather_elements(values[0].get_inner_tensor()?, idx, *dim)?.into()
                 } else {
                     layouts::gather_elements(config, region, values[..].try_into()?, *dim)?.0
@@ -269,6 +287,12 @@ impl<
             }
             PolyOp::ScatterElements { dim, constant_idx } => {
                 if let Some(idx) = constant_idx {
+                    if values.len() != 2 {
+                        return Err(TensorError::DimError(
+                            "ScatterElements requires two inputs".to_string(),
+                        )
+                        .into());
+                    }
                     tensor::ops::scatter(
                         values[0].get_inner_tensor()?,
                         idx,
@@ -297,6 +321,8 @@ impl<
                 output_padding,
                 stride,
                 group,
+                data_format,
+                kernel_format,
             } => layouts::deconv(
                 config,
                 region,
@@ -305,13 +331,17 @@ impl<
                 output_padding,
                 stride,
                 *group,
+                *data_format,
+                *kernel_format,
             )?,
             PolyOp::Add => layouts::pairwise(config, region, values[..].try_into()?, BaseOp::Add)?,
             PolyOp::Sub => layouts::pairwise(config, region, values[..].try_into()?, BaseOp::Sub)?,
             PolyOp::Mult => {
                 layouts::pairwise(config, region, values[..].try_into()?, BaseOp::Mult)?
             }
-            PolyOp::Identity { .. } => layouts::identity(config, region, values[..].try_into()?)?,
+            PolyOp::Identity { .. } => {
+                layouts::identity(config, region, values[..].try_into()?, false)?
+            }
             PolyOp::Reshape(d) | PolyOp::Flatten(d) => layouts::reshape(values[..].try_into()?, d)?,
             PolyOp::Pad(p) => {
                 if values.len() != 1 {

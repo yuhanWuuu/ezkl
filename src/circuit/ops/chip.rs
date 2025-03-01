@@ -2,16 +2,15 @@ use std::str::FromStr;
 
 use halo2_proofs::{
     circuit::Layouter,
-    plonk::{ConstraintSystem, Constraints, Expression, Selector},
+    plonk::{ConstraintSystem, Constraints, Expression, Selector, TableColumn},
     poly::Rotation,
 };
 use log::debug;
 #[cfg(feature = "python-bindings")]
 use pyo3::{
-    conversion::{FromPyObject, PyTryFrom},
+    conversion::{FromPyObject, IntoPy},
     exceptions::PyValueError,
     prelude::*,
-    types::PyString,
 };
 use serde::{Deserialize, Serialize};
 #[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
@@ -21,7 +20,6 @@ use crate::{
     circuit::{
         ops::base::BaseOp,
         table::{Range, RangeCheck, Table},
-        utils,
     },
     tensor::{Tensor, TensorType, ValTensor, VarTensor},
 };
@@ -76,51 +74,12 @@ impl FromStr for CheckMode {
     }
 }
 
-#[allow(missing_docs)]
-/// An enum representing the tolerance we can accept for the accumulated arguments, either absolute or percentage
-#[derive(Clone, Default, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Copy)]
-pub struct Tolerance {
-    pub val: f32,
-    pub scale: utils::F32,
-}
-
-impl std::fmt::Display for Tolerance {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.2}", self.val)
-    }
-}
-
-#[cfg(all(feature = "ezkl", not(target_arch = "wasm32")))]
-impl ToFlags for Tolerance {
-    /// Convert the struct to a subcommand string
-    fn to_flags(&self) -> Vec<String> {
-        vec![format!("{}", self)]
-    }
-}
-
-impl FromStr for Tolerance {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(val) = s.parse::<f32>() {
-            Ok(Tolerance {
-                val,
-                scale: utils::F32(1.0),
-            })
-        } else {
-            Err(
-                "Invalid tolerance value provided. It should expressed as a percentage (f32)."
-                    .to_string(),
-            )
-        }
-    }
-}
-
-impl From<f32> for Tolerance {
-    fn from(value: f32) -> Self {
-        Tolerance {
-            val: value,
-            scale: utils::F32(1.0),
+impl CheckMode {
+    /// Returns the value of the check mode
+    pub fn is_safe(&self) -> bool {
+        match self {
+            CheckMode::SAFE => true,
+            CheckMode::UNSAFE => false,
         }
     }
 }
@@ -139,36 +98,12 @@ impl IntoPy<PyObject> for CheckMode {
 #[cfg(feature = "python-bindings")]
 /// Obtains CheckMode from PyObject (Required for CheckMode to be compatible with Python)
 impl<'source> FromPyObject<'source> for CheckMode {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        let trystr = <PyString as PyTryFrom>::try_from(ob)?;
-        let strval = trystr.to_string();
-        match strval.to_lowercase().as_str() {
+    fn extract_bound(ob: &pyo3::Bound<'source, pyo3::PyAny>) -> PyResult<Self> {
+        let trystr = String::extract_bound(ob)?;
+        match trystr.to_lowercase().as_str() {
             "safe" => Ok(CheckMode::SAFE),
             "unsafe" => Ok(CheckMode::UNSAFE),
             _ => Err(PyValueError::new_err("Invalid value for CheckMode")),
-        }
-    }
-}
-
-#[cfg(feature = "python-bindings")]
-/// Converts Tolerance into a PyObject (Required for Tolerance to be compatible with Python)
-impl IntoPy<PyObject> for Tolerance {
-    fn into_py(self, py: Python) -> PyObject {
-        (self.val, self.scale.0).to_object(py)
-    }
-}
-
-#[cfg(feature = "python-bindings")]
-/// Obtains Tolerance from PyObject (Required for Tolerance to be compatible with Python)
-impl<'source> FromPyObject<'source> for Tolerance {
-    fn extract(ob: &'source PyAny) -> PyResult<Self> {
-        if let Ok((val, scale)) = ob.extract::<(f32, f32)>() {
-            Ok(Tolerance {
-                val,
-                scale: utils::F32(scale),
-            })
-        } else {
-            Err(PyValueError::new_err("Invalid tolerance value provided. "))
         }
     }
 }
@@ -207,15 +142,16 @@ impl DynamicLookups {
 
 /// A struct representing the selectors for the dynamic lookup tables
 #[derive(Clone, Debug, Default)]
+
 pub struct Shuffles {
     /// [Selector]s generated when configuring the layer. We use a [BTreeMap] as we expect to configure many dynamic lookup ops.
     pub input_selectors: BTreeMap<(usize, (usize, usize)), Selector>,
     /// Selectors for the dynamic lookup tables
-    pub reference_selectors: Vec<Selector>,
+    pub output_selectors: Vec<Selector>,
     /// Inputs:
     pub inputs: Vec<VarTensor>,
     /// tables
-    pub references: Vec<VarTensor>,
+    pub outputs: Vec<VarTensor>,
 }
 
 impl Shuffles {
@@ -226,9 +162,13 @@ impl Shuffles {
 
         Self {
             input_selectors: BTreeMap::new(),
-            reference_selectors: vec![],
-            inputs: vec![dummy_var.clone(), dummy_var.clone()],
-            references: vec![single_col_dummy_var.clone(), single_col_dummy_var.clone()],
+            output_selectors: vec![],
+            inputs: vec![dummy_var.clone(), dummy_var.clone(), dummy_var.clone()],
+            outputs: vec![
+                single_col_dummy_var.clone(),
+                single_col_dummy_var.clone(),
+                single_col_dummy_var.clone(),
+            ],
         }
     }
 }
@@ -328,6 +268,8 @@ pub struct BaseConfig<F: PrimeField + TensorType + PartialOrd> {
     /// Activate sanity checks
     pub check_mode: CheckMode,
     _marker: PhantomData<F>,
+    /// shared table inputs
+    pub shared_table_inputs: Vec<TableColumn>,
 }
 
 impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
@@ -340,6 +282,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
             shuffles: Shuffles::dummy(col_size, num_inner_cols),
             range_checks: RangeChecks::dummy(col_size, num_inner_cols),
             check_mode: CheckMode::SAFE,
+            shared_table_inputs: vec![],
             _marker: PhantomData,
         }
     }
@@ -366,13 +309,18 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
         if inputs[0].num_cols() != output.num_cols() {
             log::warn!("input and output shapes do not match");
         }
+        if inputs[0].num_inner_cols() != inputs[1].num_inner_cols() {
+            log::warn!("input number of inner columns do not match");
+        }
+        if inputs[0].num_inner_cols() != output.num_inner_cols() {
+            log::warn!("input and output number of inner columns do not match");
+        }
 
         for i in 0..output.num_blocks() {
             for j in 0..output.num_inner_cols() {
                 nonaccum_selectors.insert((BaseOp::Add, i, j), meta.selector());
                 nonaccum_selectors.insert((BaseOp::Sub, i, j), meta.selector());
                 nonaccum_selectors.insert((BaseOp::Mult, i, j), meta.selector());
-                nonaccum_selectors.insert((BaseOp::IsBoolean, i, j), meta.selector());
             }
         }
 
@@ -406,24 +354,13 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                 // Get output expressions for each input channel
                 let (rotation_offset, rng) = base_op.query_offset_rng();
 
-                let constraints = match base_op {
-                    BaseOp::IsBoolean => {
-                        let expected_output: Tensor<Expression<F>> = output
-                            .query_rng(meta, *block_idx, *inner_col_idx, 0, 1)
-                            .expect("non accum: output query failed");
+                let constraints = {
+                    let expected_output: Tensor<Expression<F>> = output
+                        .query_rng(meta, *block_idx, *inner_col_idx, rotation_offset, rng)
+                        .expect("non accum: output query failed");
 
-                        let output = expected_output[base_op.constraint_idx()].clone();
-
-                        vec![(output.clone()) * (output.clone() - Expression::Constant(F::from(1)))]
-                    }
-                    _ => {
-                        let expected_output: Tensor<Expression<F>> = output
-                            .query_rng(meta, *block_idx, *inner_col_idx, rotation_offset, rng)
-                            .expect("non accum: output query failed");
-
-                        let res = base_op.nonaccum_f((qis[0].clone(), qis[1].clone()));
-                        vec![expected_output[base_op.constraint_idx()].clone() - res]
-                    }
+                    let res = base_op.nonaccum_f((qis[0].clone(), qis[1].clone()));
+                    vec![expected_output[base_op.constraint_idx()].clone() - res]
                 };
 
                 Constraints::with_selector(selector, constraints)
@@ -478,6 +415,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
             dynamic_lookups: DynamicLookups::default(),
             shuffles: Shuffles::default(),
             range_checks: RangeChecks::default(),
+            shared_table_inputs: vec![],
             check_mode,
             _marker: PhantomData,
         }
@@ -508,21 +446,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
             return Err(CircuitError::WrongColumnType(output.name().to_string()));
         }
 
-        // we borrow mutably twice so we need to do this dance
-
         let table = if !self.static_lookups.tables.contains_key(nl) {
-            // as all tables have the same input we see if there's another table who's input we can reuse
-            let table = if let Some(table) = self.static_lookups.tables.values().next() {
-                Table::<F>::configure(
-                    cs,
-                    lookup_range,
-                    logrows,
-                    nl,
-                    Some(table.table_inputs.clone()),
-                )
-            } else {
-                Table::<F>::configure(cs, lookup_range, logrows, nl, None)
-            };
+            let table =
+                Table::<F>::configure(cs, lookup_range, logrows, nl, &mut self.shared_table_inputs);
             self.static_lookups.tables.insert(nl.clone(), table.clone());
             table
         } else {
@@ -573,9 +499,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         // this is 0 if the index is the same as the column index (starting from 1)
 
                         let col_expr = sel.clone()
-                            * table
+                            * (table
                                 .selector_constructor
-                                .get_expr_at_idx(col_idx, synthetic_sel);
+                                .get_expr_at_idx(col_idx, synthetic_sel));
 
                         let multiplier =
                             table.selector_constructor.get_selector_val_at_idx(col_idx);
@@ -607,6 +533,40 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         res
                     });
                 }
+
+                // add a degree-k custom constraint of the following form to the range check and
+                // static lookup configuration.
+                // 𝑚𝑢𝑙𝑡𝑖𝑠𝑒𝑙 · ∏ (𝑠𝑒𝑙 − 𝑖) = 0 where 𝑠𝑒𝑙 is the synthetic_sel, and the product is over the set of overflowed columns
+                // and 𝑚𝑢𝑙𝑡𝑖𝑠𝑒𝑙 is the selector value at the column index
+                cs.create_gate("range_check_on_sel", |cs| {
+                    let synthetic_sel = match len {
+                        1 => Expression::Constant(F::from(1)),
+                        _ => match index {
+                            VarTensor::Advice { inner: advices, .. } => {
+                                cs.query_advice(advices[x][y], Rotation(0))
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
+
+                    let range_check_on_synthetic_sel = match len {
+                        1 => Expression::Constant(F::from(0)),
+                        _ => {
+                            let mut initial_expr = Expression::Constant(F::from(1));
+                            for i in 0..len {
+                                initial_expr = initial_expr
+                                    * (synthetic_sel.clone()
+                                        - Expression::Constant(F::from(i as u64)))
+                            }
+                            initial_expr
+                        }
+                    };
+
+                    let sel = cs.query_selector(multi_col_selector);
+
+                    Constraints::with_selector(sel, vec![range_check_on_synthetic_sel])
+                });
+
                 self.static_lookups
                     .selectors
                     .insert((nl.clone(), x, y), multi_col_selector);
@@ -732,8 +692,8 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
     pub fn configure_shuffles(
         &mut self,
         cs: &mut ConstraintSystem<F>,
-        inputs: &[VarTensor; 2],
-        references: &[VarTensor; 2],
+        inputs: &[VarTensor; 3],
+        outputs: &[VarTensor; 3],
     ) -> Result<(), CircuitError>
     where
         F: Field,
@@ -744,14 +704,14 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
             }
         }
 
-        for t in references.iter() {
+        for t in outputs.iter() {
             if !t.is_advice() || t.num_inner_cols() > 1 {
                 return Err(CircuitError::WrongDynamicColumnType(t.name().to_string()));
             }
         }
 
         // assert all tables have the same number of blocks
-        if references
+        if outputs
             .iter()
             .map(|t| t.num_blocks())
             .collect::<Vec<_>>()
@@ -759,23 +719,23 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
             .any(|w| w[0] != w[1])
         {
             return Err(CircuitError::WrongDynamicColumnType(
-                "references inner cols".to_string(),
+                "outputs inner cols".to_string(),
             ));
         }
 
         let one = Expression::Constant(F::ONE);
 
-        for q in 0..references[0].num_blocks() {
-            let s_reference = cs.complex_selector();
+        for q in 0..outputs[0].num_blocks() {
+            let s_output = cs.complex_selector();
 
             for x in 0..inputs[0].num_blocks() {
                 for y in 0..inputs[0].num_inner_cols() {
                     let s_input = cs.complex_selector();
 
-                    cs.lookup_any("lookup", |cs| {
+                    cs.lookup_any("shuffle", |cs| {
                         let s_inputq = cs.query_selector(s_input);
                         let mut expression = vec![];
-                        let s_referenceq = cs.query_selector(s_reference);
+                        let s_outputq = cs.query_selector(s_output);
                         let mut input_queries = vec![one.clone()];
 
                         for input in inputs {
@@ -787,9 +747,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                             });
                         }
 
-                        let mut ref_queries = vec![one.clone()];
-                        for reference in references {
-                            ref_queries.push(match reference {
+                        let mut output_queries = vec![one.clone()];
+                        for output in outputs {
+                            output_queries.push(match output {
                                 VarTensor::Advice { inner: advices, .. } => {
                                     cs.query_advice(advices[q][0], Rotation(0))
                                 }
@@ -798,7 +758,7 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         }
 
                         let lhs = input_queries.into_iter().map(|c| c * s_inputq.clone());
-                        let rhs = ref_queries.into_iter().map(|c| c * s_referenceq.clone());
+                        let rhs = output_queries.into_iter().map(|c| c * s_outputq.clone());
                         expression.extend(lhs.zip(rhs));
 
                         expression
@@ -809,13 +769,13 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         .or_insert(s_input);
                 }
             }
-            self.shuffles.reference_selectors.push(s_reference);
+            self.shuffles.output_selectors.push(s_output);
         }
 
         // if we haven't previously initialized the input/output, do so now
-        if self.shuffles.references.is_empty() {
-            debug!("assigning shuffles reference");
-            self.shuffles.references = references.to_vec();
+        if self.shuffles.outputs.is_empty() {
+            debug!("assigning shuffles output");
+            self.shuffles.outputs = outputs.to_vec();
         }
         if self.shuffles.inputs.is_empty() {
             debug!("assigning shuffles input");
@@ -847,7 +807,6 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
         let range_check = if let std::collections::btree_map::Entry::Vacant(e) =
             self.range_checks.ranges.entry(range)
         {
-            // as all tables have the same input we see if there's another table who's input we can reuse
             let range_check = RangeCheck::<F>::configure(cs, range, logrows);
             e.insert(range_check.clone());
             range_check
@@ -885,9 +844,9 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         let default_x = range_check.get_first_element(col_idx);
 
                         let col_expr = sel.clone()
-                            * range_check
+                            * (range_check
                                 .selector_constructor
-                                .get_expr_at_idx(col_idx, synthetic_sel);
+                                .get_expr_at_idx(col_idx, synthetic_sel));
 
                         let multiplier = range_check
                             .selector_constructor
@@ -910,6 +869,40 @@ impl<F: PrimeField + TensorType + PartialOrd + std::hash::Hash> BaseConfig<F> {
                         res
                     });
                 }
+
+                // add a degree-k custom constraint of the following form to the range check and
+                // static lookup configuration.
+                // 𝑚𝑢𝑙𝑡𝑖𝑠𝑒𝑙 · ∏ (𝑠𝑒𝑙 − 𝑖) = 0 where 𝑠𝑒𝑙 is the synthetic_sel, and the product is over the set of overflowed columns
+                // and 𝑚𝑢𝑙𝑡𝑖𝑠𝑒𝑙 is the selector value at the column index
+                cs.create_gate("range_check_on_sel", |cs| {
+                    let synthetic_sel = match len {
+                        1 => Expression::Constant(F::from(1)),
+                        _ => match index {
+                            VarTensor::Advice { inner: advices, .. } => {
+                                cs.query_advice(advices[x][y], Rotation(0))
+                            }
+                            _ => unreachable!(),
+                        },
+                    };
+
+                    let range_check_on_synthetic_sel = match len {
+                        1 => Expression::Constant(F::from(0)),
+                        _ => {
+                            let mut initial_expr = Expression::Constant(F::from(1));
+                            for i in 0..len {
+                                initial_expr = initial_expr
+                                    * (synthetic_sel.clone()
+                                        - Expression::Constant(F::from(i as u64)))
+                            }
+                            initial_expr
+                        }
+                    };
+
+                    let sel = cs.query_selector(multi_col_selector);
+
+                    Constraints::with_selector(sel, vec![range_check_on_synthetic_sel])
+                });
+
                 self.range_checks
                     .selectors
                     .insert((range, x, y), multi_col_selector);
